@@ -14,6 +14,6 @@ export interface SshKey {
 
 /**
  * Keys are create-and-delete only: renaming or re-keying an existing entry
- * would silently break every VPS already trusting it.
+ * would silently break every Node already trusting it.
  */
 export type SshKeyPayload = Pick<SshKey, 'name' | 'type'>

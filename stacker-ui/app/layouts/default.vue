@@ -8,10 +8,10 @@ const navUi: NavigationMenu['ui'] = {
   linkLeadingIcon: 'size-4.5'
 }
 
-// VPS and SSH Keys are live today; the rest are placeholders for upcoming menus.
+// Nodes and SSH Keys are live today; the rest are placeholders for upcoming menus.
 const links: NavigationMenuItem[][] = [
   [
-    { label: 'VPS', icon: 'i-lucide-server', to: '/dashboard/vps' },
+    { label: 'Nodes', icon: 'i-lucide-server', to: '/dashboard/nodes' },
     { label: 'SSH Keys', icon: 'i-lucide-key-round', to: '/dashboard/ssh-keys' }
   ],
   [
@@ -37,6 +37,8 @@ const links: NavigationMenuItem[][] = [
       </template>
 
       <template #default="{ collapsed }">
+        <ClusterSwitcher :collapsed="collapsed" class="mb-2" />
+
         <p
           v-if="!collapsed"
           class="px-2.5 pb-2 pt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-dimmed"

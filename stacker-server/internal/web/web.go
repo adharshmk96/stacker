@@ -22,7 +22,7 @@ const notBuilt = "The stacker UI is not embedded in this binary. Run `task build
 
 // Register mounts the embedded UI as the fallback for anything the API did not
 // claim. Assets are served straight from the embedded FS; every other path
-// falls back to index.html so client-side routes like /dashboard/vps resolve on
+// falls back to index.html so client-side routes like /dashboard/nodes resolve on
 // a hard refresh.
 func Register(r *gin.Engine) error {
 	assets, err := fs.Sub(dist, "dist")

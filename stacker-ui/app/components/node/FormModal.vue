@@ -1,20 +1,24 @@
 <script setup lang="ts">
 import type { FormError, FormSubmitEvent } from '@nuxt/ui'
-import type { Vps, VpsKeyStatus, VpsPayload } from '~/types/vps'
+import type { Node, NodeKeyStatus, NodePayload } from '~/types/node'
 
 const props = defineProps<{
-  /** Passing a VPS switches the modal to edit mode */
-  vps?: Vps | null
+  /** Passing a Node switches the modal to edit mode */
+  node?: Node | null
 }>()
 
-const emit = defineEmits<{ saved: [Vps] }>()
+const emit = defineEmits<{ saved: [Node] }>()
 
 const open = defineModel<boolean>('open', { default: false })
 
-const { sshKeys, create, update, installKey } = useVps()
+const { sshKeys, create, update, installKey } = useNodes()
 const toast = useToast()
 
-const isEdit = computed(() => !!props.vps)
+const isEdit = computed(() => !!props.node)
+
+// The local node is the machine stacker runs on: there is no host to reach and
+// no key to install, so the form collapses to a rename.
+const isLocal = computed(() => !!props.node?.local)
 
 const DEFAULT_SSH_PORT = 22
 
@@ -32,23 +36,23 @@ function blank(): State {
 }
 
 /** Key status for the row being edited, updated live by the Install button */
-const keyStatus = ref<VpsKeyStatus>('unknown')
+const keyStatus = ref<NodeKeyStatus>('unknown')
 const keyMessage = ref('')
 
 // Reset every time the modal opens so a cancelled edit never leaks into the next one.
 watch(open, (value) => {
   if (!value) return
 
-  Object.assign(state, props.vps
+  Object.assign(state, props.node
     ? {
-        name: props.vps.name,
-        ssh: props.vps.ssh,
-        port: props.vps.port,
-        sshKeyId: props.vps.sshKeyId
+        name: props.node.name,
+        ssh: props.node.ssh,
+        port: props.node.port,
+        sshKeyId: props.node.sshKeyId
       }
     : blank())
 
-  keyStatus.value = props.vps?.keyStatus ?? 'unknown'
+  keyStatus.value = props.node?.keyStatus ?? 'unknown'
   keyMessage.value = ''
   installOpen.value = false
   password.value = ''
@@ -112,6 +116,8 @@ function validate(state: State): FormError[] {
     errors.push({ name: 'name', message: 'Name is required' })
   }
 
+  if (isLocal.value) return errors
+
   if (!state.ssh.trim()) {
     errors.push({ name: 'ssh', message: 'SSH connection is required' })
   } else if (!SSH_RE.test(state.ssh.trim())) {
@@ -135,7 +141,7 @@ async function onSubmit(event: FormSubmitEvent<State>) {
   submitting.value = true
 
   try {
-    const payload: VpsPayload = {
+    const payload: NodePayload = {
       name: event.data.name.trim(),
       ssh: event.data.ssh.trim(),
       port: event.data.port,
@@ -144,12 +150,12 @@ async function onSubmit(event: FormSubmitEvent<State>) {
       keyCheckedAt: keyStatus.value === 'unknown' ? undefined : new Date().toISOString()
     }
 
-    const saved = props.vps
-      ? await update(props.vps.id, payload)
+    const saved = props.node
+      ? await update(props.node.id, payload)
       : await create(payload)
 
     toast.add({
-      title: isEdit.value ? 'VPS updated' : 'VPS created',
+      title: isEdit.value ? 'Node updated' : 'Node created',
       description: saved.name,
       icon: 'i-lucide-check-circle',
       color: 'success'
@@ -159,7 +165,7 @@ async function onSubmit(event: FormSubmitEvent<State>) {
     open.value = false
   } catch (error) {
     toast.add({
-      title: 'Could not save VPS',
+      title: 'Could not save node',
       description: error instanceof Error ? error.message : undefined,
       icon: 'i-lucide-circle-alert',
       color: 'error'
@@ -173,14 +179,16 @@ async function onSubmit(event: FormSubmitEvent<State>) {
 <template>
   <UModal
     v-model:open="open"
-    :title="isEdit ? 'Edit VPS' : 'Add VPS'"
-    :description="isEdit
-      ? 'Update the connection details for this server.'
-      : 'Register a server so stacker can deploy stacks to it.'"
+    :title="isLocal ? 'Rename node' : isEdit ? 'Edit node' : 'Add node'"
+    :description="isLocal
+      ? 'This is the machine stacker is installed on. Only its name can be changed.'
+      : isEdit
+        ? 'Update the connection details for this node.'
+        : 'Register a node so stacker can deploy stacks to it.'"
   >
     <template #body>
       <UForm
-        id="vps-form"
+        id="node-form"
         :state="state"
         :validate="validate"
         class="space-y-4"
@@ -190,7 +198,12 @@ async function onSubmit(event: FormSubmitEvent<State>) {
           <UInput v-model="state.name" placeholder="swarm-manager-1" class="w-full" autofocus />
         </UFormField>
 
-        <div class="flex gap-3">
+        <div v-if="isLocal" class="flex items-start gap-2 rounded-md border border-default px-3 py-2 text-sm text-muted">
+          <UIcon name="i-lucide-monitor" class="mt-0.5 size-4 shrink-0" />
+          <span>Stacker runs here, so there is nothing to connect to and no key to install.</span>
+        </div>
+
+        <div v-if="!isLocal" class="flex gap-3">
           <UFormField label="SSH" name="ssh" required class="flex-1">
             <UInput v-model="state.ssh" placeholder="root@10.0.0.11" class="w-full" />
           </UFormField>
@@ -200,9 +213,10 @@ async function onSubmit(event: FormSubmitEvent<State>) {
           </UFormField>
         </div>
 
-        <USeparator label="Authentication" />
+        <USeparator v-if="!isLocal" label="Authentication" />
 
         <UFormField
+          v-if="!isLocal"
           label="SSH key"
           name="sshKeyId"
           required
@@ -272,7 +286,7 @@ async function onSubmit(event: FormSubmitEvent<State>) {
         </UFormField>
 
         <div
-          v-if="installing || keyStatus !== 'unknown'"
+          v-if="!isLocal && (installing || keyStatus !== 'unknown')"
           class="flex items-start gap-2 rounded-md border px-3 py-2 text-sm"
           :class="installing
             ? 'border-default text-muted'
@@ -310,8 +324,8 @@ async function onSubmit(event: FormSubmitEvent<State>) {
         />
         <UButton
           type="submit"
-          form="vps-form"
-          :label="isEdit ? 'Save changes' : 'Create VPS'"
+          form="node-form"
+          :label="isEdit ? 'Save changes' : 'Create node'"
           :loading="submitting"
         />
       </div>

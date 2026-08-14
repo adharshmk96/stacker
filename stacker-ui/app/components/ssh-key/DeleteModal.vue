@@ -7,12 +7,12 @@ const emit = defineEmits<{ deleted: [string] }>()
 const open = defineModel<boolean>('open', { default: false })
 
 const { remove } = useSshKeys()
-const { items: vpsItems } = useVps()
+const { items: nodeItems } = useNodes()
 const toast = useToast()
 
 /** Servers that would lose their credential if this key goes away */
 const inUseBy = computed(() =>
-  props.sshKey ? vpsItems.value.filter(vps => vps.sshKeyId === props.sshKey!.id) : [])
+  props.sshKey ? nodeItems.value.filter(node => node.sshKeyId === props.sshKey!.id) : [])
 
 const deleting = ref(false)
 
@@ -58,8 +58,8 @@ async function onConfirm() {
           <UIcon name="i-lucide-triangle-alert" class="mt-0.5 size-4 shrink-0" />
           <span>
             Used by {{ inUseBy.length }}
-            {{ inUseBy.length === 1 ? 'server' : 'servers' }}:
-            <span class="font-mono">{{ inUseBy.map(vps => vps.name).join(', ') }}</span>.
+            {{ inUseBy.length === 1 ? 'node' : 'nodes' }}:
+            <span class="font-mono">{{ inUseBy.map(node => node.name).join(', ') }}</span>.
             They will need a new key before the next deploy.
           </span>
         </div>

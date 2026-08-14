@@ -51,10 +51,10 @@ func (r *Repository) Delete(id string) error {
 	return nil
 }
 
-// UsedByVpsCount reports how many VPS entries reference this key. Kept as a raw
-// count so the module doesn't have to import the vps package.
-func (r *Repository) UsedByVpsCount(id string) (int64, error) {
+// UsedByNodeCount reports how many nodes reference this key. Kept as a raw
+// count so the module doesn't have to import the node package.
+func (r *Repository) UsedByNodeCount(id string) (int64, error) {
 	var count int64
-	err := r.db.Table("vps").Where("ssh_key_id = ?", id).Count(&count).Error
+	err := r.db.Table("nodes").Where("ssh_key_id = ?", id).Count(&count).Error
 	return count, err
 }

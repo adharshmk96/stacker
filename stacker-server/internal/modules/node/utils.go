@@ -1,8 +1,9 @@
-package vps
+package node
 
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -24,6 +25,16 @@ func splitSsh(value string) (user, host string) {
 		return "", ""
 	}
 	return parts[0], parts[1]
+}
+
+// localName is the display name for the seeded local node: the machine's
+// hostname, or a neutral fallback when the OS will not give one up.
+func localName() string {
+	host, err := os.Hostname()
+	if host = strings.TrimSpace(host); err != nil || host == "" {
+		return "This machine"
+	}
+	return host
 }
 
 func newID() string {

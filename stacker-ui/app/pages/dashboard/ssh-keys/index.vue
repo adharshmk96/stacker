@@ -5,14 +5,14 @@ import type { SshKey } from '~/types/sshKey'
 useHead({ title: 'SSH Keys · Stacker' })
 
 const { items, pending, error, load } = useSshKeys()
-// Only for the "in use" counts — a key referenced by a server can't be deleted.
-const { items: vpsItems, load: loadVps } = useVps()
+// Only for the "in use" counts — a key referenced by a node can't be deleted.
+const { items: nodeItems, load: loadNodes } = useNodes()
 
 // Client-side only: the stacker server is a local daemon, so there is nothing
 // for the SSR pass to talk to.
 onMounted(() => {
   load()
-  loadVps()
+  loadNodes()
 })
 
 const search = ref('')
@@ -44,8 +44,8 @@ async function copyPublicKey(key: SshKey) {
 /** How many servers reference each key — deleting one is not free */
 const usage = computed(() => {
   const counts = new Map<string, number>()
-  for (const vps of vpsItems.value) {
-    counts.set(vps.sshKeyId, (counts.get(vps.sshKeyId) ?? 0) + 1)
+  for (const node of nodeItems.value) {
+    counts.set(node.sshKeyId, (counts.get(node.sshKeyId) ?? 0) + 1)
   }
   return counts
 })
@@ -152,7 +152,7 @@ const formatDate = (value: string) =>
         <template #usage-cell="{ row }">
           <UBadge
             v-if="usage.get(row.original.id)"
-            :label="`${usage.get(row.original.id)} ${usage.get(row.original.id) === 1 ? 'server' : 'servers'}`"
+            :label="`${usage.get(row.original.id)} ${usage.get(row.original.id) === 1 ? 'node' : 'nodes'}`"
             color="primary"
             variant="subtle"
             icon="i-lucide-server"

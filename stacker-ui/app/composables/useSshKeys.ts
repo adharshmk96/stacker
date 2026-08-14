@@ -3,7 +3,7 @@ import type { SshKey, SshKeyPayload } from '~/types/sshKey'
 /**
  * SSH keys, backed by the stacker server (`/api/ssh-keys`).
  *
- * The list lives in module scope so the page, the modals and the VPS menu
+ * The list lives in module scope so the page, the modals and the Node menu
  * (which resolves a key by id) all read the same array — mutations write
  * straight into it after the server confirms, so no caller has to refetch.
  */
@@ -50,7 +50,7 @@ export function useSshKeys() {
   }
 
   async function remove(id: string) {
-    // The server refuses keys still referenced by a VPS — let that error through.
+    // The server refuses keys still referenced by a Node — let that error through.
     await api.del(`/ssh-keys/${id}`)
     items.value = items.value.filter(item => item.id !== id)
   }

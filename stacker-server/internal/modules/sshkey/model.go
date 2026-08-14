@@ -30,7 +30,7 @@ type SshKey struct {
 }
 
 // CreateRequest is the payload accepted by POST /api/ssh-keys. Keys are
-// create-and-delete only — renaming would break every VPS already trusting it.
+// create-and-delete only — renaming would break every node already trusting it.
 type CreateRequest struct {
 	Name string  `json:"name" binding:"required,min=1,max=120"`
 	Type KeyType `json:"type" binding:"required,oneof=ed25519 rsa"`

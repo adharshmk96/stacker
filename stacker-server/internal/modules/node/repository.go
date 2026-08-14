@@ -1,4 +1,4 @@
-package vps
+package node
 
 import (
 	"errors"
@@ -15,24 +15,24 @@ func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) List() ([]Vps, error) {
-	var items []Vps
+func (r *Repository) List() ([]Node, error) {
+	var items []Node
 	err := r.db.Order("created_at desc").Find(&items).Error
 	return items, err
 }
 
-func (r *Repository) Get(id string) (Vps, error) {
-	var item Vps
+func (r *Repository) Get(id string) (Node, error) {
+	var item Node
 	err := r.db.First(&item, "id = ?", id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return Vps{}, ErrNotFound
+		return Node{}, ErrNotFound
 	}
 	return item, err
 }
 
 // ExistsByName checks for a name clash, ignoring the entry being updated.
 func (r *Repository) ExistsByName(name, excludeID string) (bool, error) {
-	q := r.db.Model(&Vps{}).Where("name = ?", name)
+	q := r.db.Model(&Node{}).Where("name = ?", name)
 	if excludeID != "" {
 		q = q.Where("id <> ?", excludeID)
 	}
@@ -42,17 +42,17 @@ func (r *Repository) ExistsByName(name, excludeID string) (bool, error) {
 	return count > 0, err
 }
 
-func (r *Repository) Create(item *Vps) error {
+func (r *Repository) Create(item *Node) error {
 	return r.db.Create(item).Error
 }
 
 // Save writes every column of an existing row.
-func (r *Repository) Save(item *Vps) error {
+func (r *Repository) Save(item *Node) error {
 	return r.db.Save(item).Error
 }
 
 func (r *Repository) Delete(id string) error {
-	res := r.db.Delete(&Vps{}, "id = ?", id)
+	res := r.db.Delete(&Node{}, "id = ?", id)
 	if res.Error != nil {
 		return res.Error
 	}

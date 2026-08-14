@@ -33,7 +33,7 @@ const typeItems = [
   { label: 'RSA 4096', value: 'rsa' }
 ]
 
-// Keys are addressed by name in the VPS menu, so duplicates would be ambiguous.
+// Keys are addressed by name in the Nodes menu, so duplicates would be ambiguous.
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/i
 
 function validate(state: State): FormError[] {
@@ -113,7 +113,7 @@ async function copyPublicKey() {
         </div>
 
         <p class="text-sm text-muted">
-          Install it on a server from the VPS menu, or add it to
+          Install it on a node from the Nodes menu, or add it to
           <code class="font-mono text-xs">~/.ssh/authorized_keys</code> yourself.
         </p>
       </div>

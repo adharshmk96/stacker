@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// VPS is the only menu implemented so far.
-await navigateTo('/dashboard/vps', { redirectCode: 302 })
+// Nodes is the only menu implemented so far.
+await navigateTo('/dashboard/nodes', { redirectCode: 302 })
 </script>
 
 <template>

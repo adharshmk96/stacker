@@ -21,7 +21,7 @@ type Dep struct {
 var Deps = []Dep{
 	{
 		Bin:      "ssh",
-		Why:      "connects to your VPS hosts",
+		Why:      "connects to your nodes",
 		Required: true,
 		Packages: map[string]string{
 			"brew": "openssh", "apt": "openssh-client", "dnf": "openssh-clients",
@@ -41,7 +41,7 @@ var Deps = []Dep{
 	},
 	{
 		Bin:      "ssh-copy-id",
-		Why:      "installs a stacker key onto a VPS",
+		Why:      "installs a stacker key onto a node",
 		Required: true,
 		Packages: map[string]string{
 			"brew": "openssh", "apt": "openssh-client", "dnf": "openssh-clients",

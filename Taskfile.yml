@@ -23,13 +23,13 @@ tasks:
     cmds:
       - go run .
 
-  vps:up:
-    desc: Start 3 local test VPS nodes on ports 2201-2203 (stacker/stacker)
+  nodes:up:
+    desc: Start 3 local test nodes on ports 2201-2203 (stacker/stacker)
     cmds:
       - docker compose -f docker-compose.vps.yml up -d --build
 
-  vps:down:
-    desc: Stop and remove the local test VPS nodes
+  nodes:down:
+    desc: Stop and remove the local test nodes
     cmds:
       - docker compose -f docker-compose.vps.yml down
 

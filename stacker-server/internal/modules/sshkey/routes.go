@@ -8,7 +8,7 @@ import (
 )
 
 // Module bundles what the rest of the app needs from ssh keys: its routes and
-// its service (the VPS module resolves private key paths through it).
+// its service (the node module resolves private key paths through it).
 type Module struct {
 	Service *Service
 	handler *Handler

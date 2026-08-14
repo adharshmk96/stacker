@@ -1,13 +1,13 @@
-import type { KeyCheckResult, Vps, VpsPayload } from '~/types/vps'
+import type { KeyCheckResult, Node, NodePayload } from '~/types/node'
 
 /**
- * VPS entries, backed by the stacker server (`/api/vps`).
+ * Node entries, backed by the stacker server (`/api/nodes`).
  *
  * Same shape as `useSshKeys`: one module-scope list shared by the page and the
  * modals, written through after the server confirms each mutation.
  */
 
-const items = ref<Vps[]>([])
+const items = ref<Node[]>([])
 const pending = ref(false)
 const error = ref<string | null>(null)
 
@@ -22,10 +22,10 @@ export interface InstallKeyArgs {
   password: string
 }
 
-export function useVps() {
+export function useNodes() {
   const api = useApi()
 
-  // The SSH Keys menu owns the key list; a VPS only references a key by id.
+  // The SSH Keys menu owns the key list; a Node only references a key by id.
   const { items: sshKeys, load: loadSshKeys } = useSshKeys()
 
   async function load(force = false) {
@@ -36,7 +36,7 @@ export function useVps() {
     error.value = null
 
     // The table renders key names, so the keys have to be in hand too.
-    inflight = Promise.all([api.get<Vps[]>('/vps'), loadSshKeys(force)])
+    inflight = Promise.all([api.get<Node[]>('/nodes'), loadSshKeys(force)])
       .then(([list]) => {
         items.value = list ?? []
         loaded = true
@@ -52,23 +52,23 @@ export function useVps() {
     return inflight
   }
 
-  async function create(payload: VpsPayload) {
-    const vps = await api.post<Vps>('/vps', payload)
-    items.value = [vps, ...items.value]
-    await confirmKey(vps, payload)
-    return vps
+  async function create(payload: NodePayload) {
+    const node = await api.post<Node>('/nodes', payload)
+    items.value = [node, ...items.value]
+    await confirmKey(node, payload)
+    return node
   }
 
-  async function update(id: string, payload: VpsPayload) {
-    const vps = await api.put<Vps>(`/vps/${id}`, payload)
+  async function update(id: string, payload: NodePayload) {
+    const node = await api.put<Node>(`/nodes/${id}`, payload)
 
     const index = items.value.findIndex(item => item.id === id)
     items.value = index === -1
-      ? [vps, ...items.value]
-      : items.value.toSpliced(index, 1, vps)
+      ? [node, ...items.value]
+      : items.value.toSpliced(index, 1, node)
 
-    await confirmKey(vps, payload)
-    return vps
+    await confirmKey(node, payload)
+    return node
   }
 
   /**
@@ -77,35 +77,35 @@ export function useVps() {
    * just installed, ask the server to confirm so the row shows the real state.
    * Failure here is not a save failure, so it never throws.
    */
-  async function confirmKey(vps: Vps, payload: VpsPayload) {
+  async function confirmKey(node: Node, payload: NodePayload) {
     if (payload.keyStatus !== 'ok') return
     try {
-      await testKey(vps)
+      await testKey(node)
     } catch {
       // Leave the row as `unknown`; the user can re-test from the row menu.
     }
   }
 
   async function remove(id: string) {
-    await api.del(`/vps/${id}`)
+    await api.del(`/nodes/${id}`)
     items.value = items.value.filter(item => item.id !== id)
   }
 
   /**
    * Runs `ssh-copy-id` with the one-time password, then verifies key auth works.
    * Takes raw connection details rather than an id — the modal installs the key
-   * while the host is still being entered, before the VPS is saved.
+   * while the host is still being entered, before the Node is saved.
    */
   function installKey(args: InstallKeyArgs): Promise<KeyCheckResult> {
-    return api.post<KeyCheckResult>('/vps/install-key', args)
+    return api.post<KeyCheckResult>('/nodes/install-key', args)
   }
 
   /** Re-checks an already-installed key, no password involved. */
-  async function testKey(vps: Vps): Promise<KeyCheckResult> {
-    const result = await api.post<KeyCheckResult>(`/vps/${vps.id}/check-key`, {})
+  async function testKey(node: Node): Promise<KeyCheckResult> {
+    const result = await api.post<KeyCheckResult>(`/nodes/${node.id}/check-key`, {})
 
     // The server stamps keyStatus/keyCheckedAt on the row; mirror it locally.
-    const index = items.value.findIndex(item => item.id === vps.id)
+    const index = items.value.findIndex(item => item.id === node.id)
     if (index !== -1) {
       items.value = items.value.toSpliced(index, 1, {
         ...items.value[index]!,

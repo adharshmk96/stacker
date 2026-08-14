@@ -37,7 +37,7 @@ func (s *Service) Get(id string) (SshKey, error) {
 }
 
 // PrivateKeyPath resolves the on-disk private key for a stored key. Other
-// modules (the VPS key install) use this to hand `-i <path>` to ssh.
+// modules (the node key install) use this to hand `-i <path>` to ssh.
 func (s *Service) PrivateKeyPath(id string) (string, error) {
 	key, err := s.repo.Get(id)
 	if err != nil {
@@ -102,7 +102,7 @@ func (s *Service) Create(req CreateRequest) (SshKey, error) {
 	return key, nil
 }
 
-// Delete removes the record and both key files. A key still referenced by a VPS
+// Delete removes the record and both key files. A key still referenced by a node
 // is refused — deleting it would strand that host.
 func (s *Service) Delete(id string) error {
 	key, err := s.repo.Get(id)
@@ -110,7 +110,7 @@ func (s *Service) Delete(id string) error {
 		return err
 	}
 
-	used, err := s.repo.UsedByVpsCount(id)
+	used, err := s.repo.UsedByNodeCount(id)
 	if err != nil {
 		return err
 	}

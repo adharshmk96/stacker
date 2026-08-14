@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"stacker/internal/config"
+	"stacker/internal/modules/node"
 	"stacker/internal/modules/sshkey"
-	"stacker/internal/modules/vps"
 	"stacker/internal/web"
 
 	"github.com/gin-gonic/gin"
@@ -28,13 +28,20 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) *gin.Engine {
 	})
 
 	// Modules are constructed here so the dependency direction is visible in
-	// one place: ssh keys first, then vps which consumes the key service.
+	// one place: ssh keys first, then nodes which consume the key service.
 	keyModule := sshkey.New(db, cfg.KeyDir, log)
-	vpsModule := vps.New(db, keyModule.Service, log)
+	nodeModule := node.New(db, keyModule.Service, log)
+
+	// The machine stacker is installed on is a node like any other, so it is
+	// seeded on every start. A failure here is not fatal — the rest of the API
+	// works without it.
+	if _, err := nodeModule.Service.EnsureLocal(); err != nil {
+		log.Error("could not register the local node", "error", err)
+	}
 
 	api := r.Group("/api")
 	keyModule.RegisterRoutes(api)
-	vpsModule.RegisterRoutes(api)
+	nodeModule.RegisterRoutes(api)
 
 	// The embedded UI is the fallback, so it must be mounted after the API.
 	if err := web.Register(r); err != nil {

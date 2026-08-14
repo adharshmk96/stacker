@@ -1,7 +1,8 @@
-package vps
+package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -22,7 +23,7 @@ type keys interface {
 	PrivateKeyPath(id string) (string, error)
 }
 
-// Service owns VPS records and the ssh calls made against them.
+// Service owns Node records and the ssh calls made against them.
 type Service struct {
 	repo *Repository
 	keys keys
@@ -33,32 +34,32 @@ func NewService(repo *Repository, keys keys, log *slog.Logger) *Service {
 	return &Service{repo: repo, keys: keys, log: log}
 }
 
-func (s *Service) List() ([]Vps, error) {
+func (s *Service) List() ([]Node, error) {
 	return s.repo.List()
 }
 
-func (s *Service) Get(id string) (Vps, error) {
+func (s *Service) Get(id string) (Node, error) {
 	return s.repo.Get(id)
 }
 
-func (s *Service) Create(req CreateRequest) (Vps, error) {
+func (s *Service) Create(req CreateRequest) (Node, error) {
 	if err := validateSsh(req.Ssh); err != nil {
-		return Vps{}, err
+		return Node{}, err
 	}
 	if _, err := s.keys.PrivateKeyPath(req.SshKeyID); err != nil {
-		return Vps{}, ErrSshKeyMissing
+		return Node{}, ErrSshKeyMissing
 	}
 
 	name := strings.TrimSpace(req.Name)
 	taken, err := s.repo.ExistsByName(name, "")
 	if err != nil {
-		return Vps{}, err
+		return Node{}, err
 	}
 	if taken {
-		return Vps{}, ErrNameTaken
+		return Node{}, ErrNameTaken
 	}
 
-	item := Vps{
+	item := Node{
 		ID:        newID(),
 		Name:      name,
 		Ssh:       strings.TrimSpace(req.Ssh),
@@ -68,32 +69,83 @@ func (s *Service) Create(req CreateRequest) (Vps, error) {
 	}
 
 	if err := s.repo.Create(&item); err != nil {
-		return Vps{}, err
+		return Node{}, err
 	}
 
-	s.log.Info("vps created", "id", item.ID, "name", item.Name)
+	s.log.Info("node created", "id", item.ID, "name", item.Name)
 	return item, nil
 }
 
-func (s *Service) Update(id string, req UpdateRequest) (Vps, error) {
+// EnsureLocal seeds (or refreshes) the row for the machine stacker is running
+// on, so installing stacker anywhere makes that machine show up as a node
+// straight away. It is idempotent: the row is keyed by LocalID, and a user who
+// renamed it keeps their name.
+func (s *Service) EnsureLocal() (Node, error) {
+	item, err := s.repo.Get(LocalID)
+	if err == nil {
+		return item, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Node{}, err
+	}
+
+	name := localName()
+	// A remote node may already own the hostname; suffix rather than fail,
+	// since the local row must exist either way.
+	for i := 2; ; i++ {
+		taken, err := s.repo.ExistsByName(name, LocalID)
+		if err != nil {
+			return Node{}, err
+		}
+		if !taken {
+			break
+		}
+		name = fmt.Sprintf("%s (%d)", localName(), i)
+	}
+
+	now := time.Now()
+	item = Node{
+		ID:    LocalID,
+		Name:  name,
+		Local: true,
+		Port:  0,
+		// The local machine needs no ssh hop, so there is no key to verify.
+		KeyStatus:    KeyStatusOK,
+		KeyCheckedAt: &now,
+	}
+	if err := s.repo.Create(&item); err != nil {
+		return Node{}, err
+	}
+
+	s.log.Info("local node registered", "name", item.Name)
+	return item, nil
+}
+
+func (s *Service) Update(id string, req UpdateRequest) (Node, error) {
 	item, err := s.repo.Get(id)
 	if err != nil {
-		return Vps{}, err
+		return Node{}, err
 	}
+
+	// The local node has no connection details to edit — only its name.
+	if item.Local {
+		return s.rename(item, req.Name)
+	}
+
 	if err := validateSsh(req.Ssh); err != nil {
-		return Vps{}, err
+		return Node{}, err
 	}
 	if _, err := s.keys.PrivateKeyPath(req.SshKeyID); err != nil {
-		return Vps{}, ErrSshKeyMissing
+		return Node{}, ErrSshKeyMissing
 	}
 
 	name := strings.TrimSpace(req.Name)
 	taken, err := s.repo.ExistsByName(name, id)
 	if err != nil {
-		return Vps{}, err
+		return Node{}, err
 	}
 	if taken {
-		return Vps{}, ErrNameTaken
+		return Node{}, ErrNameTaken
 	}
 
 	// Changing where or how we connect invalidates the last check.
@@ -108,18 +160,45 @@ func (s *Service) Update(id string, req UpdateRequest) (Vps, error) {
 	item.SshKeyID = req.SshKeyID
 
 	if err := s.repo.Save(&item); err != nil {
-		return Vps{}, err
+		return Node{}, err
 	}
 
-	s.log.Info("vps updated", "id", item.ID, "name", item.Name)
+	s.log.Info("node updated", "id", item.ID, "name", item.Name)
+	return item, nil
+}
+
+// rename is the only edit the local node accepts.
+func (s *Service) rename(item Node, rawName string) (Node, error) {
+	name := strings.TrimSpace(rawName)
+	taken, err := s.repo.ExistsByName(name, item.ID)
+	if err != nil {
+		return Node{}, err
+	}
+	if taken {
+		return Node{}, ErrNameTaken
+	}
+
+	item.Name = name
+	if err := s.repo.Save(&item); err != nil {
+		return Node{}, err
+	}
 	return item, nil
 }
 
 func (s *Service) Delete(id string) error {
+	item, err := s.repo.Get(id)
+	if err != nil {
+		return err
+	}
+	// Deleting it would be pointless: the next start seeds it again.
+	if item.Local {
+		return ErrLocalNode
+	}
+
 	if err := s.repo.Delete(id); err != nil {
 		return err
 	}
-	s.log.Info("vps deleted", "id", id)
+	s.log.Info("node deleted", "id", id)
 	return nil
 }
 
@@ -129,6 +208,11 @@ func (s *Service) CheckKey(ctx context.Context, id string) (KeyCheckResult, erro
 	item, err := s.repo.Get(id)
 	if err != nil {
 		return KeyCheckResult{}, err
+	}
+
+	// Nothing to probe on the machine we are already running on.
+	if item.Local {
+		return KeyCheckResult{OK: true, Message: "This is the machine stacker runs on"}, nil
 	}
 
 	keyPath, err := s.keys.PrivateKeyPath(item.SshKeyID)
@@ -149,7 +233,7 @@ func (s *Service) CheckKey(ctx context.Context, id string) (KeyCheckResult, erro
 		return KeyCheckResult{}, err
 	}
 
-	s.log.Info("vps key checked", "id", item.ID, "ok", result.OK)
+	s.log.Info("node key checked", "id", item.ID, "ok", result.OK)
 	return result, nil
 }
 

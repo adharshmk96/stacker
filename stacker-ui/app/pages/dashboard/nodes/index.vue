@@ -1,20 +1,20 @@
 <script setup lang="ts">
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
-import type { Vps, VpsKeyStatus, VpsSortBy, VpsSortDir } from '~/types/vps'
+import type { Node, NodeKeyStatus, NodeSortBy, NodeSortDir } from '~/types/node'
 
-useHead({ title: 'VPS · Stacker' })
+useHead({ title: 'Nodes · Stacker' })
 
-const { items, sshKeys, pending, error, load, testKey } = useVps()
+const { items, sshKeys, pending, error, load, testKey } = useNodes()
 
 // Client-side only: the stacker server is a local daemon, so there is nothing
 // for the SSR pass to talk to.
 onMounted(() => load())
 
 const search = ref('')
-const authFilter = ref<VpsKeyStatus | 'all'>('all')
+const authFilter = ref<NodeKeyStatus | 'all'>('all')
 const keyFilter = ref<string | 'all'>('all')
-const sortBy = ref<VpsSortBy>('name')
-const sortDir = ref<VpsSortDir>('asc')
+const sortBy = ref<NodeSortBy>('name')
+const sortDir = ref<NodeSortDir>('asc')
 const page = ref(1)
 const pageSize = 10
 
@@ -42,13 +42,13 @@ const keyName = (id?: string) => sshKeys.value.find(key => key.id === id)?.name
 const filtered = computed(() => {
   const term = search.value.trim().toLowerCase()
 
-  return items.value.filter((vps) => {
-    if (authFilter.value !== 'all' && vps.keyStatus !== authFilter.value) return false
-    if (keyFilter.value !== 'all' && vps.sshKeyId !== keyFilter.value) return false
+  return items.value.filter((node) => {
+    if (authFilter.value !== 'all' && node.keyStatus !== authFilter.value) return false
+    if (keyFilter.value !== 'all' && node.sshKeyId !== keyFilter.value) return false
 
     if (!term) return true
 
-    return [vps.name, vps.ssh, String(vps.port), keyName(vps.sshKeyId) ?? '']
+    return [node.name, node.ssh, String(node.port), keyName(node.sshKeyId) ?? '']
       .some(field => field.toLowerCase().includes(term))
   })
 })
@@ -87,26 +87,26 @@ function resetFilters() {
 
 const formOpen = ref(false)
 const deleteOpen = ref(false)
-const selected = ref<Vps | null>(null)
+const selected = ref<Node | null>(null)
 
 function onCreate() {
   selected.value = null
   formOpen.value = true
 }
 
-function onEdit(vps: Vps) {
-  selected.value = vps
+function onEdit(node: Node) {
+  selected.value = node
   formOpen.value = true
 }
 
-function onDelete(vps: Vps) {
-  selected.value = vps
+function onDelete(node: Node) {
+  selected.value = node
   deleteOpen.value = true
 }
 
 const toast = useToast()
 
-const statusMeta: Record<VpsKeyStatus, { icon: string, class: string, label: string }> = {
+const statusMeta: Record<NodeKeyStatus, { icon: string, class: string, label: string }> = {
   ok: {
     icon: 'i-lucide-circle-check',
     class: 'text-success',
@@ -127,52 +127,60 @@ const statusMeta: Record<VpsKeyStatus, { icon: string, class: string, label: str
 /** Ids currently being re-checked, so each row can show its own spinner */
 const testing = ref(new Set<string>())
 
-async function onTest(vps: Vps) {
-  testing.value = new Set(testing.value).add(vps.id)
+async function onTest(node: Node) {
+  testing.value = new Set(testing.value).add(node.id)
 
   try {
-    const result = await testKey(vps)
+    const result = await testKey(node)
     toast.add({
       title: result.ok ? 'Connection OK' : 'Connection failed',
-      description: `${vps.name} — ${result.message}`,
+      description: `${node.name} — ${result.message}`,
       icon: result.ok ? 'i-lucide-circle-check' : 'i-lucide-circle-x',
       color: result.ok ? 'success' : 'error'
     })
   } finally {
     const next = new Set(testing.value)
-    next.delete(vps.id)
+    next.delete(node.id)
     testing.value = next
   }
 }
 
-function rowActions(vps: Vps): DropdownMenuItem[][] {
+// The local node has no ssh connection to test or copy, and the server refuses
+// to delete it — so it only gets the rename.
+function rowActions(node: Node): DropdownMenuItem[][] {
+  if (node.local) {
+    return [
+      [{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => onEdit(node) }]
+    ]
+  }
+
   return [
     [
-      { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => onEdit(vps) },
+      { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => onEdit(node) },
       {
         label: 'Test connection',
         icon: 'i-lucide-plug-zap',
-        onSelect: () => onTest(vps)
+        onSelect: () => onTest(node)
       },
       {
         label: 'Copy SSH command',
         icon: 'i-lucide-copy',
-        onSelect: () => copySshCommand(vps)
+        onSelect: () => copySshCommand(node)
       }
     ],
     [
-      { label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => onDelete(vps) }
+      { label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => onDelete(node) }
     ]
   ]
 }
 
-async function copySshCommand(vps: Vps) {
-  const command = `ssh -p ${vps.port} ${vps.ssh}`
+async function copySshCommand(node: Node) {
+  const command = `ssh -p ${node.port} ${node.ssh}`
   await navigator.clipboard.writeText(command)
   toast.add({ title: 'Copied', description: command, icon: 'i-lucide-clipboard-check' })
 }
 
-const columns: TableColumn<Vps>[] = [
+const columns: TableColumn<Node>[] = [
   { accessorKey: 'name', header: 'Name' },
   { accessorKey: 'ssh', header: 'Connection' },
   { id: 'auth', header: 'Key' },
@@ -185,9 +193,9 @@ const formatDate = (value: string) =>
 </script>
 
 <template>
-  <UDashboardPanel id="vps" :ui="{ body: 'relative' }">
+  <UDashboardPanel id="nodes" :ui="{ body: 'relative' }">
     <template #header>
-      <UDashboardNavbar title="VPS">
+      <UDashboardNavbar title="Nodes">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
@@ -203,7 +211,7 @@ const formatDate = (value: string) =>
 
         <template #right>
           <UButton
-            label="Add VPS"
+            label="Add node"
             icon="i-lucide-plus"
             class="shadow-lg shadow-primary/20"
             @click="onCreate"
@@ -293,23 +301,40 @@ const formatDate = (value: string) =>
         <template #name-cell="{ row }">
           <div class="flex items-center gap-3">
             <div class="flex size-8 items-center justify-center rounded-md bg-elevated ring-1 ring-default">
-              <UIcon name="i-lucide-server" class="size-4 text-primary" />
+              <UIcon
+                :name="row.original.local ? 'i-lucide-monitor' : 'i-lucide-server'"
+                class="size-4 text-primary"
+              />
             </div>
             <div class="leading-tight">
-              <p class="font-medium text-highlighted">{{ row.original.name }}</p>
+              <p class="flex items-center gap-2 font-medium text-highlighted">
+                {{ row.original.name }}
+                <UBadge v-if="row.original.local" label="This machine" color="neutral" variant="subtle" size="sm" />
+              </p>
               <p class="font-mono text-xs text-dimmed">{{ row.original.id }}</p>
             </div>
           </div>
         </template>
 
         <template #ssh-cell="{ row }">
-          <span class="font-mono text-toned">{{ row.original.ssh }}</span>
-          <span class="font-mono text-dimmed">:{{ row.original.port }}</span>
+          <span v-if="row.original.local" class="font-mono text-dimmed">local — no ssh</span>
+          <template v-else>
+            <span class="font-mono text-toned">{{ row.original.ssh }}</span>
+            <span class="font-mono text-dimmed">:{{ row.original.port }}</span>
+          </template>
         </template>
 
         <template #auth-cell="{ row }">
           <div class="flex items-center gap-2">
             <UBadge
+              v-if="row.original.local"
+              color="neutral"
+              variant="subtle"
+              icon="i-lucide-shield-check"
+              label="No key needed"
+            />
+            <UBadge
+              v-else
               color="primary"
               variant="subtle"
               icon="i-lucide-key-round"
@@ -341,7 +366,7 @@ const formatDate = (value: string) =>
                 icon="i-lucide-ellipsis-vertical"
                 color="neutral"
                 variant="ghost"
-                aria-label="VPS actions"
+                aria-label="Node actions"
               />
             </UDropdownMenu>
           </div>
@@ -351,7 +376,7 @@ const formatDate = (value: string) =>
           <div class="flex flex-col items-center gap-3 py-6">
             <UIcon name="i-lucide-server-off" class="size-8 text-dimmed" />
             <p class="text-sm text-muted">
-              {{ hasFilters ? 'No VPS matches these filters.' : 'No VPS registered yet.' }}
+              {{ hasFilters ? 'No node matches these filters.' : 'No node registered yet.' }}
             </p>
             <UButton
               v-if="hasFilters"
@@ -360,14 +385,14 @@ const formatDate = (value: string) =>
               variant="subtle"
               @click="resetFilters"
             />
-            <UButton v-else label="Add your first VPS" icon="i-lucide-plus" @click="onCreate" />
+            <UButton v-else label="Add your first node" icon="i-lucide-plus" @click="onCreate" />
           </div>
         </template>
       </UTable>
 
       <div class="flex items-center justify-between gap-3 border-t border-default pt-4 mt-auto">
         <p class="text-sm text-muted">
-          {{ sorted.length }} of {{ items.length }} {{ items.length === 1 ? 'server' : 'servers' }}
+          {{ sorted.length }} of {{ items.length }} {{ items.length === 1 ? 'node' : 'nodes' }}
         </p>
         <UPagination
           v-if="pageCount > 1"
@@ -379,6 +404,6 @@ const formatDate = (value: string) =>
     </template>
   </UDashboardPanel>
 
-  <VpsFormModal v-model:open="formOpen" :vps="selected" />
-  <VpsDeleteModal v-model:open="deleteOpen" :vps="selected" />
+  <NodeFormModal v-model:open="formOpen" :node="selected" />
+  <NodeDeleteModal v-model:open="deleteOpen" :node="selected" />
 </template>

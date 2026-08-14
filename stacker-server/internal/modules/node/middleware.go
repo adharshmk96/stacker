@@ -1,4 +1,4 @@
-package vps
+package node
 
 import (
 	"net/http"
