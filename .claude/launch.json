@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "stacker-ui",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--cwd", "stacker-ui", "dev"],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}

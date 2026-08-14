@@ -1,0 +1,35 @@
+version: '3'
+
+vars:
+  BIN: '{{.TASK_DIR}}/bin/stacker'
+
+tasks:
+  build:ui:
+    desc: Build the Nuxt UI into stacker-server/internal/web/dist for embedding
+    cmds:
+      - bash scripts/build-ui.sh
+
+  run:
+    desc: Run the stacker server
+    dir: stacker-server
+    deps: [build:ui]
+    cmds:
+      - go run .
+
+  dev:server:
+    desc: Run the API on :8080 (the UI dev server proxies /api to it)
+    dir: stacker-server
+    cmds:
+      - go run .
+
+  dev:ui:
+    desc: Run the Nuxt dev server on :3000 with HMR
+    cmds:
+      - bun run --cwd stacker-ui dev
+
+  test:
+    desc: Run the Go tests
+    dir: stacker-server
+    cmds:
+      - go test ./...
+

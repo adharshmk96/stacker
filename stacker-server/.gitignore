@@ -1,0 +1,6 @@
+bin/
+
+# The embedded UI build is a build artifact — regenerate it with `task build:ui`.
+# .gitkeep stays so the //go:embed in internal/web still compiles on a clone.
+internal/web/dist/*
+!internal/web/dist/.gitkeep
