@@ -16,16 +16,20 @@ tasks:
     cmds:
       - go run .
 
-  dev:server:
-    desc: Run the API on :8080 (the UI dev server proxies /api to it)
-    dir: stacker-server
+  vps:up:
+    desc: Start 3 local test VPS nodes on ports 2201-2203 (stacker/stacker)
     cmds:
-      - go run .
+      - docker compose -f docker-compose.vps.yml up -d --build
 
-  dev:ui:
-    desc: Run the Nuxt dev server on :3000 with HMR
+  vps:down:
+    desc: Stop and remove the local test VPS nodes
     cmds:
-      - bun run --cwd stacker-ui dev
+      - docker compose -f docker-compose.vps.yml down
+
+  release:snapshot:
+    desc: Build release artifacts locally without publishing
+    cmds:
+      - goreleaser release --snapshot --clean
 
   test:
     desc: Run the Go tests

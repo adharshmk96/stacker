@@ -1,0 +1,35 @@
+# Three local test "VPS" nodes to point stacker at.
+#
+#   docker compose -f docker-compose.vps.yml up -d --build
+#
+# Add them in the UI as stacker@localhost (or stacker@127.0.0.1) on ports
+# 2201 / 2202 / 2203, password `stacker`.
+name: stacker-vps
+
+services:
+  vps-node-1:
+    build: ./docker/vps-node
+    image: stacker/vps-node
+    container_name: stacker-vps-1
+    hostname: vps-node-1
+    ports:
+      - "2201:22"
+    restart: unless-stopped
+
+  vps-node-2:
+    build: ./docker/vps-node
+    image: stacker/vps-node
+    container_name: stacker-vps-2
+    hostname: vps-node-2
+    ports:
+      - "2202:22"
+    restart: unless-stopped
+
+  vps-node-3:
+    build: ./docker/vps-node
+    image: stacker/vps-node
+    container_name: stacker-vps-3
+    hostname: vps-node-3
+    ports:
+      - "2203:22"
+    restart: unless-stopped
