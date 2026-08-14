@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"stacker/internal/bootstrap"
 	"stacker/internal/config"
 	"stacker/internal/server"
 
@@ -38,6 +39,7 @@ var rootCmd = &cobra.Command{
 		if addr != "" {
 			cfg.Addr = addr
 		}
+		bootstrap.EnsureFirstRun(cmd.Context(), cfg.DataDir, os.Stderr)
 		return server.Run(cfg)
 	},
 	SilenceUsage: true,
