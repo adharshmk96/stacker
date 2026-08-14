@@ -26,13 +26,9 @@ type Config struct {
 // Load builds the config from the environment, falling back to the
 // platform-specific application data directory.
 func Load() (Config, error) {
-	dataDir := os.Getenv("STACKER_DATA_DIR")
-	if dataDir == "" {
-		var err error
-		dataDir, err = defaultDataDir()
-		if err != nil {
-			return Config{}, err
-		}
+	dataDir, err := DataDir()
+	if err != nil {
+		return Config{}, err
 	}
 
 	cfg := Config{
@@ -55,6 +51,16 @@ func Load() (Config, error) {
 // IsProduction reports whether the server should hide internal error details.
 func (c Config) IsProduction() bool {
 	return c.Env == "production"
+}
+
+// DataDir resolves the application data directory without creating anything,
+// so callers that only need the path (like `stacker uninstall`) don't recreate
+// a directory they are about to remove.
+func DataDir() (string, error) {
+	if dir := os.Getenv("STACKER_DATA_DIR"); dir != "" {
+		return dir, nil
+	}
+	return defaultDataDir()
 }
 
 func defaultDataDir() (string, error) {
