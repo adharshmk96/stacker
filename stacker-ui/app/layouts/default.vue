@@ -8,17 +8,27 @@ const navUi: NavigationMenu['ui'] = {
   linkLeadingIcon: 'size-4.5'
 }
 
+const route = useRoute()
+
 // Nodes and SSH Keys are live today; the rest are placeholders for upcoming menus.
-const links: NavigationMenuItem[][] = [
+const links = computed<NavigationMenuItem[][]>(() => [
   [
     { label: 'Nodes', icon: 'i-lucide-server', to: '/dashboard/nodes' },
+    {
+      label: 'Swarm',
+      icon: 'i-lucide-boxes',
+      // Every resource tab is its own route, so the entry stays lit across all
+      // of them rather than only on the one it links to.
+      to: '/dashboard/swarm/services',
+      active: route.path.startsWith('/dashboard/swarm')
+    },
     { label: 'SSH Keys', icon: 'i-lucide-key-round', to: '/dashboard/ssh-keys' }
   ],
   [
     // No `to` until the routes exist — a disabled item still resolves its link.
     { label: 'Stacks', icon: 'i-lucide-layers', disabled: true }
   ]
-]
+])
 </script>
 
 <template>
@@ -37,8 +47,6 @@ const links: NavigationMenuItem[][] = [
       </template>
 
       <template #default="{ collapsed }">
-        <ClusterSwitcher :collapsed="collapsed" class="mb-2" />
-
         <p
           v-if="!collapsed"
           class="px-2.5 pb-2 pt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-dimmed"
