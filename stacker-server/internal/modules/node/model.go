@@ -74,6 +74,14 @@ type Node struct {
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+
+	// Reachability and its two companions are never stored: they describe
+	// whether the host answered a moment ago, and a reading kept across a
+	// restart would only be a stale claim. They are filled from the service's
+	// in-memory cache on the way out.
+	Reachability        Reachability `gorm:"-" json:"reachability"`
+	ReachabilityMessage string       `gorm:"-" json:"reachabilityMessage,omitempty"`
+	ReachableCheckedAt  *time.Time   `gorm:"-" json:"reachableCheckedAt,omitempty"`
 }
 
 // TableName pins the table name the sshkey module queries by hand.

@@ -35,12 +35,15 @@ func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
 	// Not under /:id — the key is installed while the host is still being
 	// entered, before there is a record to hang it off.
 	items.POST("/install-key", m.handler.installKey)
+	// A reachability sweep over every node at once — what the table polls.
+	items.POST("/ping", m.handler.pingAll)
 
 	byID := items.Group("/:id", requireID())
 	byID.GET("", m.handler.get)
 	byID.PUT("", m.handler.update)
 	byID.DELETE("", m.handler.remove)
 	byID.POST("/check-key", m.handler.checkKey)
+	byID.POST("/ping", m.handler.ping)
 
 	swarm := byID.Group("/swarm")
 	// Configure is one verb for both cases: it inits the local node as the

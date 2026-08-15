@@ -117,6 +117,35 @@ export function useNodes() {
     return result
   }
 
+  /* ---- reachability ---- */
+
+  /**
+   * Probes every node at once and writes the readings back. Reachability is not
+   * stored anywhere, so the list arrives `unknown` and only this call fills it
+   * in; the page runs it on mount and on a timer.
+   *
+   * Failure is never fatal — an unreachable server already shows as the page's
+   * error banner, and a half-refreshed status column is worse than a stale one.
+   */
+  async function pingAll() {
+    try {
+      const list = await api.post<Node[]>('/nodes/ping', {})
+      items.value = list ?? []
+    } catch {
+      // Leave the rows as they stand.
+    }
+  }
+
+  /** Re-probes one node, for the row's own refresh action. */
+  async function ping(node: Node) {
+    const updated = await api.post<Node>(`/nodes/${node.id}/ping`, {})
+
+    const index = items.value.findIndex(item => item.id === updated.id)
+    if (index !== -1) items.value = items.value.toSpliced(index, 1, updated)
+
+    return updated
+  }
+
   /* ---- swarm ---- */
 
   /**
@@ -171,6 +200,8 @@ export function useNodes() {
     remove,
     installKey,
     testKey,
+    pingAll,
+    ping,
     hasManager,
     configureSwarm,
     provisionStatus,

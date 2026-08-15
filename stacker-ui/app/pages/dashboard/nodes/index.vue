@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
-import type { Node, NodeKeyStatus, NodeSortBy, NodeSortDir, SwarmRole } from '~/types/node'
+import type { Node, NodeKeyStatus, NodeSortBy, NodeSortDir, Reachability, SwarmRole } from '~/types/node'
 
 useHead({ title: 'Nodes · Stacker' })
 
@@ -11,6 +11,8 @@ const {
   error,
   load,
   testKey,
+  pingAll,
+  ping,
   hasManager,
   promoteSwarm,
   demoteSwarm,
@@ -18,11 +20,23 @@ const {
   refreshSwarm
 } = useNodes()
 
+/** How often the status column re-probes every host, in ms */
+const pingInterval = 30_000
+
 // Client-side only: the stacker server is a local daemon, so there is nothing
 // for the SSR pass to talk to.
-onMounted(() => load())
+onMounted(async () => {
+  await load()
+  // Reachability is never stored, so the rows arrive `unknown` until a sweep
+  // has run; from then on the timer keeps the column honest.
+  pingAll()
+
+  const timer = setInterval(pingAll, pingInterval)
+  onBeforeUnmount(() => clearInterval(timer))
+})
 
 const search = ref('')
+const stateFilter = ref<Reachability | 'all'>('all')
 const authFilter = ref<NodeKeyStatus | 'all'>('all')
 const keyFilter = ref<string | 'all'>('all')
 const swarmFilter = ref<SwarmRole | 'all'>('all')
@@ -30,6 +44,13 @@ const sortBy = ref<NodeSortBy>('name')
 const sortDir = ref<NodeSortDir>('asc')
 const page = ref(1)
 const pageSize = 10
+
+const stateItems = [
+  { label: 'Any state', value: 'all' },
+  { label: 'Online', value: 'online' },
+  { label: 'Offline', value: 'offline' },
+  { label: 'Unknown', value: 'unknown' }
+]
 
 const authItems = [
   { label: 'Any status', value: 'all' },
@@ -63,6 +84,7 @@ const filtered = computed(() => {
   const term = search.value.trim().toLowerCase()
 
   return items.value.filter((node) => {
+    if (stateFilter.value !== 'all' && (node.reachability ?? 'unknown') !== stateFilter.value) return false
     if (authFilter.value !== 'all' && node.keyStatus !== authFilter.value) return false
     if (keyFilter.value !== 'all' && node.sshKeyId !== keyFilter.value) return false
     if (swarmFilter.value !== 'all' && node.swarmRole !== swarmFilter.value) return false
@@ -93,16 +115,17 @@ const paginated = computed(() => {
 })
 
 // Any narrowing of the result set can strand the user on an empty page.
-watch([search, authFilter, keyFilter, swarmFilter, sorted], () => {
+watch([search, stateFilter, authFilter, keyFilter, swarmFilter, sorted], () => {
   if (page.value > pageCount.value) page.value = pageCount.value
 })
 
 const hasFilters = computed(() =>
-  !!search.value || authFilter.value !== 'all' || keyFilter.value !== 'all'
-  || swarmFilter.value !== 'all')
+  !!search.value || stateFilter.value !== 'all' || authFilter.value !== 'all'
+  || keyFilter.value !== 'all' || swarmFilter.value !== 'all')
 
 function resetFilters() {
   search.value = ''
+  stateFilter.value = 'all'
   authFilter.value = 'all'
   keyFilter.value = 'all'
   swarmFilter.value = 'all'
@@ -147,8 +170,59 @@ const statusMeta: Record<NodeKeyStatus, { icon: string, class: string, label: st
   }
 }
 
+const stateMeta: Record<Reachability, { label: string, dot: string, text: string, hint: string }> = {
+  online: {
+    label: 'Online',
+    dot: 'bg-success',
+    text: 'text-success',
+    hint: 'The host answered the last check'
+  },
+  offline: {
+    label: 'Offline',
+    dot: 'bg-error',
+    text: 'text-error',
+    hint: 'The host did not answer the last check'
+  },
+  unknown: {
+    label: 'Unknown',
+    dot: 'bg-muted',
+    text: 'text-dimmed',
+    hint: 'Not checked yet'
+  }
+}
+
+const stateOf = (node: Node) => stateMeta[node.reachability ?? 'unknown']
+
 /** Ids currently being re-checked, so each row can show its own spinner */
 const testing = ref(new Set<string>())
+
+/** Ids with a reachability probe in flight, so each row shows its own spinner */
+const pinging = ref(new Set<string>())
+
+async function onPing(node: Node) {
+  pinging.value = new Set(pinging.value).add(node.id)
+
+  try {
+    const updated = await ping(node)
+    toast.add({
+      title: updated.reachability === 'online' ? 'Node is online' : 'Node is offline',
+      description: `${node.name} — ${updated.reachabilityMessage ?? ''}`,
+      icon: updated.reachability === 'online' ? 'i-lucide-wifi' : 'i-lucide-wifi-off',
+      color: updated.reachability === 'online' ? 'success' : 'error'
+    })
+  } catch (err) {
+    toast.add({
+      title: 'Could not check the node',
+      description: err instanceof Error ? err.message : undefined,
+      icon: 'i-lucide-circle-alert',
+      color: 'error'
+    })
+  } finally {
+    const next = new Set(pinging.value)
+    next.delete(node.id)
+    pinging.value = next
+  }
+}
 
 async function onTest(node: Node) {
   testing.value = new Set(testing.value).add(node.id)
@@ -240,6 +314,11 @@ function rowActions(node: Node): DropdownMenuItem[][] {
   return [
     [
       { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => onEdit(node) },
+      {
+        label: 'Check status',
+        icon: 'i-lucide-activity',
+        onSelect: () => onPing(node)
+      },
       {
         label: 'Test connection',
         icon: 'i-lucide-plug-zap',
@@ -382,6 +461,14 @@ const formatDate = (value: string) =>
             </template>
           </UInput>
 
+          <USelect
+            v-model="stateFilter"
+            :items="stateItems"
+            value-key="value"
+            icon="i-lucide-activity"
+            class="w-36"
+          />
+
           <USelect v-model="authFilter" :items="authItems" value-key="value" class="w-36" />
           <USelect
             v-model="keyFilter"
@@ -451,10 +538,15 @@ const formatDate = (value: string) =>
       >
         <template #name-cell="{ row }">
           <div class="flex items-center gap-3">
-            <div class="flex size-8 items-center justify-center rounded-md bg-elevated ring-1 ring-default">
+            <div class="relative flex size-8 items-center justify-center rounded-md bg-elevated ring-1 ring-default">
               <UIcon
                 :name="row.original.local ? 'i-lucide-monitor' : 'i-lucide-server'"
                 class="size-4 text-primary"
+              />
+              <span
+                class="absolute -right-1 -bottom-1 size-2.5 rounded-full ring-2 ring-default"
+                :class="stateOf(row.original).dot"
+                :title="stateOf(row.original).hint"
               />
             </div>
             <div class="leading-tight">
@@ -462,7 +554,21 @@ const formatDate = (value: string) =>
                 {{ row.original.name }}
                 <UBadge v-if="row.original.local" label="This machine" color="neutral" variant="subtle" size="sm" />
               </p>
-              <p class="font-mono text-xs text-dimmed">{{ row.original.id }}</p>
+              <p class="flex items-center gap-2 text-xs">
+                <span
+                  class="inline-flex items-center gap-1"
+                  :class="stateOf(row.original).text"
+                  :title="row.original.reachabilityMessage || stateOf(row.original).hint"
+                >
+                  <UIcon
+                    v-if="pinging.has(row.original.id)"
+                    name="i-lucide-loader-circle"
+                    class="size-3 animate-spin"
+                  />
+                  {{ pinging.has(row.original.id) ? 'Checking…' : stateOf(row.original).label }}
+                </span>
+                <span class="font-mono text-dimmed">{{ row.original.id }}</span>
+              </p>
             </div>
           </div>
         </template>

@@ -34,6 +34,27 @@ func (h *Handler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": item})
 }
 
+// pingAll probes every node and answers with the refreshed list. It is a POST
+// because it reaches out to every host, which is an action, not a read.
+func (h *Handler) pingAll(c *gin.Context) {
+	items, err := h.service.PingAll(c.Request.Context())
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items})
+}
+
+// ping probes one node and answers with the refreshed row.
+func (h *Handler) ping(c *gin.Context) {
+	item, err := h.service.Ping(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": item})
+}
+
 func (h *Handler) create(c *gin.Context) {
 	var req CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

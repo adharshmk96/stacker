@@ -12,6 +12,13 @@ export type NodeKeyStatus = 'unknown' | 'ok' | 'failed'
  */
 export type SwarmRole = 'none' | 'manager' | 'worker'
 
+/**
+ * `unknown` — not probed since the server started
+ * `online`  — the host answered the last probe
+ * `offline` — it did not
+ */
+export type Reachability = 'unknown' | 'online' | 'offline'
+
 export interface Node {
   id: string
   name: string
@@ -43,12 +50,19 @@ export interface Node {
   swarmSyncedAt?: string
   createdAt: string
   updatedAt: string
+  /** Whether the host answered the last probe. Never stored — server memory only */
+  reachability: Reachability
+  /** Why the last probe failed, if it did */
+  reachabilityMessage?: string
+  /** When reachability was last determined */
+  reachableCheckedAt?: string
 }
 
 export type NodePayload = Omit<
   Node,
   'id' | 'local' | 'createdAt' | 'updatedAt'
   | 'swarmRole' | 'swarmNodeId' | 'swarmAddr' | 'swarmError' | 'swarmSyncedAt'
+  | 'reachability' | 'reachabilityMessage' | 'reachableCheckedAt'
 >
 
 /** Outcome of an ssh-copy-id run or a plain key check */

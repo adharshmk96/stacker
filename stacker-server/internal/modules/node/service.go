@@ -43,6 +43,10 @@ type Service struct {
 	// every step re-checks before it acts, so a run lost to a restart is simply
 	// run again.
 	jobs map[string]*ProvisionJob
+
+	// health is the last reachability reading per node, kept in memory so the
+	// list can answer "is this host up?" without probing on every request.
+	health *healthCache
 }
 
 func NewService(repo *Repository, keys keys, log *slog.Logger) *Service {
@@ -53,15 +57,29 @@ func NewService(repo *Repository, keys keys, log *slog.Logger) *Service {
 		rt:   runner{keys: keys},
 		busy: map[string]bool{},
 		jobs: map[string]*ProvisionJob{},
+
+		health: newHealthCache(),
 	}
 }
 
 func (s *Service) List() ([]Node, error) {
-	return s.repo.List()
+	items, err := s.repo.List()
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		s.decorate(&items[i])
+	}
+	return items, nil
 }
 
 func (s *Service) Get(id string) (Node, error) {
-	return s.repo.Get(id)
+	item, err := s.repo.Get(id)
+	if err != nil {
+		return Node{}, err
+	}
+	s.decorate(&item)
+	return item, nil
 }
 
 func (s *Service) Create(req CreateRequest) (Node, error) {
@@ -228,6 +246,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := s.repo.Delete(id); err != nil {
 		return err
 	}
+	s.health.drop(id)
 	s.log.Info("node deleted", "id", id)
 	return nil
 }
@@ -337,6 +356,17 @@ func (s *Service) InstallKey(ctx context.Context, req InstallKeyRequest) (KeyChe
 // probeKey runs a no-op command over ssh with key auth only — no prompts, no
 // agent — so the result reflects the stored key and nothing else.
 func probeKey(ctx context.Context, keyPath, target string, port int) KeyCheckResult {
+	return probeWith(ctx, keyPath, target, port, sshConnectTimeout)
+}
+
+// probeHost is the same round trip with a shorter patience, used by the
+// reachability sweep: the table only asks whether the host answers, and a slow
+// host holds up the whole column.
+func probeHost(ctx context.Context, keyPath, target string, port int) KeyCheckResult {
+	return probeWith(ctx, keyPath, target, port, pingConnectTimeout)
+}
+
+func probeWith(ctx context.Context, keyPath, target string, port int, connectTimeout time.Duration) KeyCheckResult {
 	ctx, cancel := context.WithTimeout(ctx, sshCommandTimeout)
 	defer cancel()
 
@@ -346,7 +376,7 @@ func probeKey(ctx context.Context, keyPath, target string, port int) KeyCheckRes
 		"-o", "BatchMode=yes",
 		"-o", "IdentitiesOnly=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
-		"-o", fmt.Sprintf("ConnectTimeout=%d", int(sshConnectTimeout.Seconds())),
+		"-o", fmt.Sprintf("ConnectTimeout=%d", int(connectTimeout.Seconds())),
 		target,
 		"true",
 	}
