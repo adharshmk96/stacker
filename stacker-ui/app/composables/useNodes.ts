@@ -1,4 +1,4 @@
-import type { KeyCheckResult, Node, NodePayload } from '~/types/node'
+import type { KeyCheckResult, Node, NodePayload, ProvisionJob, SwarmResult } from '~/types/node'
 
 /**
  * Node entries, backed by the stacker server (`/api/nodes`).
@@ -117,6 +117,49 @@ export function useNodes() {
     return result
   }
 
+  /* ---- swarm ---- */
+
+  /**
+   * Every swarm endpoint answers with the node as the server now sees it, so
+   * they all funnel through here: run the call, write the row back, hand the
+   * message to the caller for the toast.
+   */
+  async function swarmAction(node: Node, action: string, body?: unknown): Promise<SwarmResult> {
+    const result = await api.post<SwarmResult>(`/nodes/${node.id}/swarm/${action}`, body ?? {})
+
+    const index = items.value.findIndex(item => item.id === result.node.id)
+    if (index !== -1) items.value = items.value.toSpliced(index, 1, result.node)
+
+    return result
+  }
+
+  /**
+   * Starts the configure run: checks the node, installs docker if it is
+   * missing, then initialises the swarm (local node) or joins it (any other).
+   *
+   * It returns as soon as the run has started rather than when it finishes —
+   * installing docker takes minutes — so the caller polls `provisionStatus`
+   * for the checklist.
+   */
+  const configureSwarm = (node: Node, advertiseAddr?: string) =>
+    api.post<ProvisionJob>(`/nodes/${node.id}/swarm/configure`, {
+      advertiseAddr: advertiseAddr?.trim() || ''
+    })
+
+  /** The latest configure run for a node, checklist and all. */
+  const provisionStatus = (node: Node) =>
+    api.get<ProvisionJob>(`/nodes/${node.id}/swarm/configure`)
+
+  const promoteSwarm = (node: Node) => swarmAction(node, 'promote')
+  const demoteSwarm = (node: Node) => swarmAction(node, 'demote')
+  const leaveSwarm = (node: Node) => swarmAction(node, 'leave')
+
+  /** Re-reads the node's real state from docker, catching changes made outside stacker. */
+  const refreshSwarm = (node: Node) => swarmAction(node, 'refresh')
+
+  /** True once some node is a manager — nothing can join before that. */
+  const hasManager = computed(() => items.value.some(item => item.swarmRole === 'manager'))
+
   return {
     items,
     sshKeys,
@@ -127,6 +170,13 @@ export function useNodes() {
     update,
     remove,
     installKey,
-    testKey
+    testKey,
+    hasManager,
+    configureSwarm,
+    provisionStatus,
+    promoteSwarm,
+    demoteSwarm,
+    leaveSwarm,
+    refreshSwarm
   }
 }

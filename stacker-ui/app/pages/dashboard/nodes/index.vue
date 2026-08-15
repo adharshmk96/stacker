@@ -1,10 +1,22 @@
 <script setup lang="ts">
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
-import type { Node, NodeKeyStatus, NodeSortBy, NodeSortDir } from '~/types/node'
+import type { Node, NodeKeyStatus, NodeSortBy, NodeSortDir, SwarmRole } from '~/types/node'
 
 useHead({ title: 'Nodes · Stacker' })
 
-const { items, sshKeys, pending, error, load, testKey } = useNodes()
+const {
+  items,
+  sshKeys,
+  pending,
+  error,
+  load,
+  testKey,
+  hasManager,
+  promoteSwarm,
+  demoteSwarm,
+  leaveSwarm,
+  refreshSwarm
+} = useNodes()
 
 // Client-side only: the stacker server is a local daemon, so there is nothing
 // for the SSR pass to talk to.
@@ -13,6 +25,7 @@ onMounted(() => load())
 const search = ref('')
 const authFilter = ref<NodeKeyStatus | 'all'>('all')
 const keyFilter = ref<string | 'all'>('all')
+const swarmFilter = ref<SwarmRole | 'all'>('all')
 const sortBy = ref<NodeSortBy>('name')
 const sortDir = ref<NodeSortDir>('asc')
 const page = ref(1)
@@ -23,6 +36,13 @@ const authItems = [
   { label: 'Connected', value: 'ok' },
   { label: 'Failing', value: 'failed' },
   { label: 'Not installed', value: 'unknown' }
+]
+
+const swarmItems = [
+  { label: 'Any role', value: 'all' },
+  { label: 'Managers', value: 'manager' },
+  { label: 'Workers', value: 'worker' },
+  { label: 'Not configured', value: 'none' }
 ]
 
 const keyItems = computed(() => [
@@ -45,6 +65,7 @@ const filtered = computed(() => {
   return items.value.filter((node) => {
     if (authFilter.value !== 'all' && node.keyStatus !== authFilter.value) return false
     if (keyFilter.value !== 'all' && node.sshKeyId !== keyFilter.value) return false
+    if (swarmFilter.value !== 'all' && node.swarmRole !== swarmFilter.value) return false
 
     if (!term) return true
 
@@ -72,17 +93,19 @@ const paginated = computed(() => {
 })
 
 // Any narrowing of the result set can strand the user on an empty page.
-watch([search, authFilter, keyFilter, sorted], () => {
+watch([search, authFilter, keyFilter, swarmFilter, sorted], () => {
   if (page.value > pageCount.value) page.value = pageCount.value
 })
 
 const hasFilters = computed(() =>
-  !!search.value || authFilter.value !== 'all' || keyFilter.value !== 'all')
+  !!search.value || authFilter.value !== 'all' || keyFilter.value !== 'all'
+  || swarmFilter.value !== 'all')
 
 function resetFilters() {
   search.value = ''
   authFilter.value = 'all'
   keyFilter.value = 'all'
+  swarmFilter.value = 'all'
 }
 
 const formOpen = ref(false)
@@ -145,12 +168,72 @@ async function onTest(node: Node) {
   }
 }
 
+/* ---- swarm ---- */
+
+const swarmMeta: Record<SwarmRole, { label: string, icon: string, color: 'primary' | 'success' | 'neutral' }> = {
+  manager: { label: 'Manager', icon: 'i-lucide-crown', color: 'primary' },
+  worker: { label: 'Worker', icon: 'i-lucide-boxes', color: 'success' },
+  none: { label: 'Not configured', icon: 'i-lucide-circle-dashed', color: 'neutral' }
+}
+
+const configureOpen = ref(false)
+
+/** Ids with a swarm call in flight, so each row shows its own spinner */
+const swarmBusy = ref(new Set<string>())
+
+/**
+ * Demoting or removing the last manager would leave the swarm with no control
+ * plane, so the option is hidden rather than offered and then refused.
+ */
+const managerCount = computed(() =>
+  items.value.filter(node => node.swarmRole === 'manager').length)
+
+const promoteOpen = ref(false)
+
+function onPromote(node: Node) {
+  selected.value = node
+  promoteOpen.value = true
+}
+
+function onConfigure(node: Node) {
+  selected.value = node
+  configureOpen.value = true
+}
+
+/**
+ * Runs a swarm call for one row, showing the server's own message either way —
+ * docker's errors ("this node is already part of a swarm", "docker not found")
+ * are the useful part.
+ */
+async function runSwarm(node: Node, action: (node: Node) => Promise<{ message: string }>, title: string) {
+  swarmBusy.value = new Set(swarmBusy.value).add(node.id)
+
+  try {
+    const result = await action(node)
+    toast.add({ title, description: result.message, icon: 'i-lucide-boxes', color: 'success' })
+  } catch (err) {
+    toast.add({
+      title: `Could not ${title.toLowerCase()}`,
+      description: err instanceof Error ? err.message : undefined,
+      icon: 'i-lucide-circle-alert',
+      color: 'error'
+    })
+  } finally {
+    const next = new Set(swarmBusy.value)
+    next.delete(node.id)
+    swarmBusy.value = next
+  }
+}
+
 // The local node has no ssh connection to test or copy, and the server refuses
-// to delete it — so it only gets the rename.
+// to delete it — so its only non-swarm action is the rename.
 function rowActions(node: Node): DropdownMenuItem[][] {
+  const swarm = swarmActions(node)
+
   if (node.local) {
     return [
-      [{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => onEdit(node) }]
+      [{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => onEdit(node) }],
+      swarm
     ]
   }
 
@@ -168,10 +251,69 @@ function rowActions(node: Node): DropdownMenuItem[][] {
         onSelect: () => copySshCommand(node)
       }
     ],
+    swarm,
     [
-      { label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => onDelete(node) }
+      {
+        label: 'Delete',
+        icon: 'i-lucide-trash-2',
+        color: 'error',
+        // A node still in the swarm has to leave first, or it would go on
+        // running tasks with nothing left to administer it.
+        disabled: node.swarmRole !== 'none',
+        onSelect: () => onDelete(node)
+      }
     ]
   ]
+}
+
+/** The swarm section of the row menu, which depends entirely on the current role. */
+function swarmActions(node: Node): DropdownMenuItem[] {
+  if (node.swarmRole === 'none') {
+    return [
+      {
+        label: node.local ? 'Enable swarm' : 'Configure',
+        icon: 'i-lucide-boxes',
+        // Nothing can join before a manager exists; the local node is the one
+        // that creates it.
+        disabled: !node.local && !hasManager.value,
+        onSelect: () => onConfigure(node)
+      }
+    ]
+  }
+
+  const actions: DropdownMenuItem[] = [
+    {
+      label: 'Refresh swarm state',
+      icon: 'i-lucide-refresh-cw',
+      onSelect: () => runSwarm(node, refreshSwarm, 'Refresh swarm state')
+    }
+  ]
+
+  if (node.swarmRole === 'worker') {
+    actions.unshift({
+      label: 'Promote to manager',
+      icon: 'i-lucide-crown',
+      onSelect: () => onPromote(node)
+    })
+  } else if (managerCount.value > 1) {
+    actions.unshift({
+      label: 'Demote to worker',
+      icon: 'i-lucide-arrow-down',
+      onSelect: () => runSwarm(node, demoteSwarm, 'Demote node')
+    })
+  }
+
+  // Leaving is only offered when something would still administer the swarm.
+  if (node.swarmRole === 'worker' || managerCount.value > 1) {
+    actions.push({
+      label: 'Leave swarm',
+      icon: 'i-lucide-log-out',
+      color: 'error',
+      onSelect: () => runSwarm(node, leaveSwarm, 'Leave swarm')
+    })
+  }
+
+  return actions
 }
 
 async function copySshCommand(node: Node) {
@@ -184,6 +326,7 @@ const columns: TableColumn<Node>[] = [
   { accessorKey: 'name', header: 'Name' },
   { accessorKey: 'ssh', header: 'Connection' },
   { id: 'auth', header: 'Key' },
+  { id: 'swarm', header: 'Swarm' },
   { accessorKey: 'updatedAt', header: 'Updated' },
   { id: 'actions' }
 ]
@@ -245,6 +388,14 @@ const formatDate = (value: string) =>
             :items="keyItems"
             value-key="value"
             icon="i-lucide-key-round"
+            class="w-40"
+          />
+
+          <USelect
+            v-model="swarmFilter"
+            :items="swarmItems"
+            value-key="value"
+            icon="i-lucide-boxes"
             class="w-40"
           />
 
@@ -355,6 +506,52 @@ const formatDate = (value: string) =>
           </div>
         </template>
 
+        <template #swarm-cell="{ row }">
+          <div class="flex items-center gap-2">
+            <UIcon
+              v-if="swarmBusy.has(row.original.id)"
+              name="i-lucide-loader-circle"
+              class="size-4 shrink-0 animate-spin text-dimmed"
+            />
+
+            <UButton
+              v-else-if="row.original.swarmRole === 'none'"
+              :label="row.original.local ? 'Enable swarm' : 'Configure'"
+              icon="i-lucide-boxes"
+              size="xs"
+              color="neutral"
+              variant="subtle"
+              :disabled="!row.original.local && !hasManager"
+              :title="!row.original.local && !hasManager
+                ? 'Configure the local node first — a swarm needs a manager before anything can join'
+                : undefined"
+              @click="onConfigure(row.original)"
+            />
+
+            <UBadge
+              v-else
+              :label="swarmMeta[row.original.swarmRole].label"
+              :icon="swarmMeta[row.original.swarmRole].icon"
+              :color="swarmMeta[row.original.swarmRole].color"
+              variant="subtle"
+            />
+
+            <UIcon
+              v-if="row.original.swarmError"
+              name="i-lucide-triangle-alert"
+              class="size-4 shrink-0 text-warning"
+              :title="row.original.swarmError"
+            />
+          </div>
+
+          <p
+            v-if="row.original.swarmRole === 'manager' && row.original.swarmAddr"
+            class="mt-1 font-mono text-xs text-dimmed"
+          >
+            {{ row.original.swarmAddr }}:2377
+          </p>
+        </template>
+
         <template #updatedAt-cell="{ row }">
           {{ formatDate(row.original.updatedAt) }}
         </template>
@@ -406,4 +603,10 @@ const formatDate = (value: string) =>
 
   <NodeFormModal v-model:open="formOpen" :node="selected" />
   <NodeDeleteModal v-model:open="deleteOpen" :node="selected" />
+  <NodeSwarmConfigureModal v-model:open="configureOpen" :node="selected" />
+  <NodeSwarmPromoteModal
+    v-model:open="promoteOpen"
+    :node="selected"
+    :manager-count="managerCount"
+  />
 </template>

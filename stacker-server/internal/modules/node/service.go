@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,10 +29,31 @@ type Service struct {
 	repo *Repository
 	keys keys
 	log  *slog.Logger
+
+	// rt runs docker commands on a node, locally or over ssh.
+	rt runner
+
+	// busy holds the ids with a swarm operation in flight, guarded by mu, so
+	// two clients cannot join or promote the same node at once.
+	mu   sync.Mutex
+	busy map[string]bool
+
+	// jobs holds the most recent provisioning run per node, so the UI can poll
+	// a checklist that outlives the request which started it. In memory only:
+	// every step re-checks before it acts, so a run lost to a restart is simply
+	// run again.
+	jobs map[string]*ProvisionJob
 }
 
 func NewService(repo *Repository, keys keys, log *slog.Logger) *Service {
-	return &Service{repo: repo, keys: keys, log: log}
+	return &Service{
+		repo: repo,
+		keys: keys,
+		log:  log,
+		rt:   runner{keys: keys},
+		busy: map[string]bool{},
+		jobs: map[string]*ProvisionJob{},
+	}
 }
 
 func (s *Service) List() ([]Node, error) {
@@ -185,7 +207,7 @@ func (s *Service) rename(item Node, rawName string) (Node, error) {
 	return item, nil
 }
 
-func (s *Service) Delete(id string) error {
+func (s *Service) Delete(ctx context.Context, id string) error {
 	item, err := s.repo.Get(id)
 	if err != nil {
 		return err
@@ -193,6 +215,13 @@ func (s *Service) Delete(id string) error {
 	// Deleting it would be pointless: the next start seeds it again.
 	if item.Local {
 		return ErrLocalNode
+	}
+
+	// Forgetting a node stacker had joined would leave it running swarm tasks
+	// with nothing left to administer it, so it has to leave first. The state
+	// is re-read because the swarm may have changed outside stacker.
+	if s.swarmRoleOf(ctx, item) != SwarmRoleNone {
+		return ErrNodeInSwarm
 	}
 
 	if err := s.repo.Delete(id); err != nil {

@@ -42,6 +42,30 @@ func (r *Repository) ExistsByName(name, excludeID string) (bool, error) {
 	return count > 0, err
 }
 
+// Manager returns the swarm manager stacker joins new nodes against. The local
+// node wins when it is a manager, since it is the one bootstrapped on init and
+// the one always reachable; otherwise the oldest manager is used, so the choice
+// is stable across calls.
+func (r *Repository) Manager() (Node, error) {
+	var item Node
+	err := r.db.
+		Where("swarm_role = ?", SwarmRoleManager).
+		Order("local desc, created_at asc").
+		First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return Node{}, ErrNoManager
+	}
+	return item, err
+}
+
+// CountByRole is how the service knows whether demoting or removing a manager
+// would leave the swarm without a control plane.
+func (r *Repository) CountByRole(role SwarmRole) (int64, error) {
+	var count int64
+	err := r.db.Model(&Node{}).Where("swarm_role = ?", role).Count(&count).Error
+	return count, err
+}
+
 func (r *Repository) Create(item *Node) error {
 	return r.db.Create(item).Error
 }

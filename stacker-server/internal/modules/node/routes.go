@@ -41,4 +41,16 @@ func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
 	byID.PUT("", m.handler.update)
 	byID.DELETE("", m.handler.remove)
 	byID.POST("/check-key", m.handler.checkKey)
+
+	swarm := byID.Group("/swarm")
+	// Configure is one verb for both cases: it inits the local node as the
+	// first manager and joins every other node to it, so the UI does not have
+	// to know which applies.
+	swarm.POST("/configure", m.handler.configure)
+	// The checklist of the run configure started, polled while it works.
+	swarm.GET("/configure", m.handler.provisionStatus)
+	swarm.POST("/promote", m.handler.promote)
+	swarm.POST("/demote", m.handler.demote)
+	swarm.POST("/leave", m.handler.leaveSwarm)
+	swarm.POST("/refresh", m.handler.refreshSwarm)
 }
