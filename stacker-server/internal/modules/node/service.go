@@ -218,9 +218,10 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 
 	// Forgetting a node stacker had joined would leave it running swarm tasks
-	// with nothing left to administer it, so it has to leave first. The state
-	// is re-read because the swarm may have changed outside stacker.
-	if s.swarmRoleOf(ctx, item) != SwarmRoleNone {
+	// with nothing left to administer it, so it has to leave first. Only *our*
+	// swarm counts: a node sitting in someone else's swarm is nothing stacker
+	// administers, and refusing to forget it would strand the row forever.
+	if s.inOurSwarm(ctx, item) {
 		return ErrNodeInSwarm
 	}
 

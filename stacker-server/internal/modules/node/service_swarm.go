@@ -539,14 +539,40 @@ func truncate(value string, max int) string {
 	return value[:max-1] + "…"
 }
 
-// swarmRoleOf is used by Delete to re-check membership without trusting a
-// possibly stale row.
-func (s *Service) swarmRoleOf(ctx context.Context, item Node) SwarmRole {
+// inOurSwarm reports whether the node belongs to the swarm stacker administers.
+// Delete uses it to decide whether forgetting the node would strand it.
+//
+// Being in *a* swarm is not enough: a node can be active in a swarm that has
+// nothing to do with this one — the same case Configure rejects with
+// ErrForeignSwarm — and stacker has no business keeping that row alive. The
+// test is therefore the manager's roster, not the node's own docker state.
+func (s *Service) inOurSwarm(ctx context.Context, item Node) bool {
 	state, err := s.rt.state(ctx, item)
 	if err != nil {
 		// An unreachable node falls back to what was last recorded, so an
 		// offline host does not silently look like it left the swarm.
-		return item.SwarmRole
+		return item.SwarmRole != SwarmRoleNone
 	}
-	return state.Role()
+	if !state.Active() {
+		return false
+	}
+
+	manager, err := s.repo.Manager()
+	if err != nil {
+		// With no manager of our own there is no swarm to be stranded in.
+		return false
+	}
+	// A node that is our manager is in our swarm by definition, and asking it
+	// about its own roster would be circular.
+	if manager.ID == item.ID {
+		return true
+	}
+
+	known, err := s.managerKnows(ctx, manager, state.NodeID)
+	if err != nil {
+		// The manager could not be asked. Fall back to the recorded role rather
+		// than assume either way.
+		return item.SwarmRole != SwarmRoleNone
+	}
+	return known
 }
