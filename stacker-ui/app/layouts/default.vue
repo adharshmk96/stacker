@@ -13,6 +13,16 @@ const route = useRoute()
 // Nodes and SSH Keys are live today; the rest are placeholders for upcoming menus.
 const links = computed<NavigationMenuItem[][]>(() => [
   [
+    {
+      label: 'Projects',
+      icon: 'i-lucide-package',
+      to: '/dashboard/projects',
+      // `/new` and `/:id` are their own routes, so match the whole subtree.
+      active: route.path.startsWith('/dashboard/projects')
+    },
+    { label: 'Deployments', icon: 'i-lucide-rocket', to: '/dashboard/deployments' }
+  ],
+  [
     { label: 'Nodes', icon: 'i-lucide-server', to: '/dashboard/nodes' },
     {
       label: 'Swarm',
@@ -51,7 +61,7 @@ const links = computed<NavigationMenuItem[][]>(() => [
           v-if="!collapsed"
           class="px-2.5 pb-2 pt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-dimmed"
         >
-          Infrastructure
+          Application
         </p>
         <UNavigationMenu
           orientation="vertical"
@@ -60,10 +70,24 @@ const links = computed<NavigationMenuItem[][]>(() => [
           class="stacker-nav"
           :ui="navUi"
         />
+
+        <p
+          v-if="!collapsed"
+          class="px-2.5 pb-2 pt-5 font-mono text-[10px] uppercase tracking-[0.12em] text-dimmed"
+        >
+          Infrastructure
+        </p>
         <UNavigationMenu
           orientation="vertical"
           :collapsed="collapsed"
           :items="links[1]"
+          class="stacker-nav"
+          :ui="navUi"
+        />
+        <UNavigationMenu
+          orientation="vertical"
+          :collapsed="collapsed"
+          :items="links[2]"
           class="stacker-nav mt-auto"
           :ui="navUi"
         />
