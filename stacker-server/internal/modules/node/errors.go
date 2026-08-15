@@ -9,6 +9,9 @@ var (
 	ErrSshKeyMissing = errors.New("the referenced ssh key does not exist")
 	ErrLocalNode     = errors.New("the local node cannot be deleted")
 	ErrCopyIDMissing = errors.New("sshpass and ssh-copy-id are required to install a key")
+	// ErrPasswordRequired is only reached when the key is not already installed:
+	// a repeat install short-circuits before the password is looked at.
+	ErrPasswordRequired = errors.New("a password is required to install the key on this host for the first time")
 
 	// Swarm errors.
 	ErrDockerMissing    = errors.New("docker is not installed on this node")

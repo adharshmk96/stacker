@@ -174,7 +174,7 @@ func respondError(c *gin.Context, err error) {
 	case errors.Is(err, ErrInvalidSsh), errors.Is(err, ErrSshKeyMissing),
 		errors.Is(err, ErrNotWorker), errors.Is(err, ErrNotManagerRole),
 		errors.Is(err, ErrNotInSwarm), errors.Is(err, ErrLastManager),
-		errors.Is(err, ErrAdvertiseAddr):
+		errors.Is(err, ErrAdvertiseAddr), errors.Is(err, ErrPasswordRequired):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrCopyIDMissing), errors.Is(err, ErrDockerMissing),
 		errors.Is(err, ErrDockerNotRunning), errors.Is(err, ErrNoManager),

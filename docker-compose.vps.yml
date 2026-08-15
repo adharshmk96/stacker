@@ -4,32 +4,65 @@
 #
 # Add them in the UI as stacker@localhost (or stacker@127.0.0.1) on ports
 # 2201 / 2202 / 2203, password `stacker`.
+#
+# Each node boots systemd, so it behaves like a real VPS: stacker installs
+# docker over SSH and the daemon comes up under systemd on its own. That
+# needs `privileged` + a writable cgroup fs. /var/lib/docker AND
+# /var/lib/containerd are named volumes to keep image layers off
+# overlay-on-overlay -- modern docker uses the containerd snapshotter, so
+# nested `docker run` fails with a mount EINVAL without the containerd one.
 name: stacker-vps
+
+x-vps-node: &vps-node
+  build: ./docker/vps-node
+  image: stacker/vps-node
+  privileged: true
+  cgroup: host
+  restart: unless-stopped
+  tmpfs:
+    - /run
+    - /run/lock
+  volumes:
+    - /sys/fs/cgroup:/sys/fs/cgroup:rw
 
 services:
   vps-node-1:
-    build: ./docker/vps-node
-    image: stacker/vps-node
+    <<: *vps-node
     container_name: stacker-vps-1
     hostname: vps-node-1
     ports:
       - "2201:22"
-    restart: unless-stopped
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - vps-node-1-docker:/var/lib/docker
+      - vps-node-1-containerd:/var/lib/containerd
 
   vps-node-2:
-    build: ./docker/vps-node
-    image: stacker/vps-node
+    <<: *vps-node
     container_name: stacker-vps-2
     hostname: vps-node-2
     ports:
       - "2202:22"
-    restart: unless-stopped
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - vps-node-2-docker:/var/lib/docker
+      - vps-node-2-containerd:/var/lib/containerd
 
   vps-node-3:
-    build: ./docker/vps-node
-    image: stacker/vps-node
+    <<: *vps-node
     container_name: stacker-vps-3
     hostname: vps-node-3
     ports:
       - "2203:22"
-    restart: unless-stopped
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - vps-node-3-docker:/var/lib/docker
+      - vps-node-3-containerd:/var/lib/containerd
+
+volumes:
+  vps-node-1-docker:
+  vps-node-1-containerd:
+  vps-node-2-docker:
+  vps-node-2-containerd:
+  vps-node-3-docker:
+  vps-node-3-containerd:

@@ -112,7 +112,10 @@ type InstallKeyRequest struct {
 	Ssh      string `json:"ssh" binding:"required"`
 	Port     int    `json:"port" binding:"omitempty,min=1,max=65535"`
 	SshKeyID string `json:"sshKeyId" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	// Password is optional at the binding: installing onto a host that already
+	// has the key is a no-op that never needs one, and the service asks for it
+	// only when it is genuinely about to run ssh-copy-id.
+	Password string `json:"password"`
 }
 
 // ConfigureRequest is the payload for POST /api/nodes/:id/swarm/configure.

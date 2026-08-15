@@ -267,10 +267,16 @@ func (s *Service) CheckKey(ctx context.Context, id string) (KeyCheckResult, erro
 	return result, nil
 }
 
-// InstallKey runs ssh-copy-id once with the supplied password, then verifies the
-// result with a key-only connection. It works on bare connection details, not a
-// stored record, so the UI can install before saving. The password is never
-// persisted.
+// InstallKey installs the key with ssh-copy-id, then verifies the result with a
+// key-only connection. It works on bare connection details, not a stored record,
+// so the UI can install before saving. The password is never persisted.
+//
+// The host is probed first, so an install that has already happened costs one
+// ssh round trip and changes nothing. That is what makes the call safe to
+// repeat: a re-run needs no password (the UI's Install button stays useful
+// after the host has disabled password auth, which is the usual thing to do
+// once a key works), and it never has to reason about ssh-copy-id's own
+// deduplication.
 func (s *Service) InstallKey(ctx context.Context, req InstallKeyRequest) (KeyCheckResult, error) {
 	if err := validateSsh(req.Ssh); err != nil {
 		return KeyCheckResult{}, err
@@ -282,6 +288,18 @@ func (s *Service) InstallKey(ctx context.Context, req InstallKeyRequest) (KeyChe
 	}
 	target := strings.TrimSpace(req.Ssh)
 	port := portOrDefault(req.Port)
+
+	// Already installed: nothing to do, and nothing to ask the user for.
+	if result := probeKey(ctx, keyPath, target, port); result.OK {
+		s.log.Info("ssh key already installed", "ssh", target)
+		return KeyCheckResult{OK: true, Message: "The key is already installed on this host"}, nil
+	}
+
+	// Only a genuine install needs the password, so it is checked here rather
+	// than at the request binding, where it would block the no-op re-run above.
+	if strings.TrimSpace(req.Password) == "" {
+		return KeyCheckResult{}, ErrPasswordRequired
+	}
 
 	// ssh-copy-id prompts on a tty, so sshpass feeds it the password instead.
 	if _, err := exec.LookPath("sshpass"); err != nil {
@@ -307,7 +325,7 @@ func (s *Service) InstallKey(ctx context.Context, req InstallKeyRequest) (KeyChe
 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		s.log.Warn("ssh-copy-id failed", "ssh", target)
-		return KeyCheckResult{OK: false, Message: firstLine(string(out), err)}, nil
+		return KeyCheckResult{OK: false, Message: copyIDError(string(out), err)}, nil
 	}
 
 	// Installing is only meaningful if the key now works on its own.
@@ -353,6 +371,36 @@ func firstLine(output string, fallback error) string {
 		if line = strings.TrimSpace(line); line != "" {
 			return line
 		}
+	}
+	return fallback.Error()
+}
+
+// copyIDError picks the line of an ssh-copy-id failure that says what went
+// wrong. Plain firstLine cannot: ssh-copy-id always opens with an
+// `INFO: Source of key(s) to be installed:` banner on stderr, so every failure
+// looked identical and told the user nothing. The real cause — a refused
+// password, a changed host key — comes later in the output.
+func copyIDError(output string, fallback error) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+
+	// A changed host key aborts before authentication and prints a banner the
+	// user cannot act on without being told what it means.
+	for _, line := range lines {
+		if strings.Contains(line, "REMOTE HOST IDENTIFICATION HAS CHANGED") {
+			return "the host key has changed since this host was last seen — if that was expected " +
+				"(the box was rebuilt), remove the old entry with `ssh-keygen -R` and try again"
+		}
+	}
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "", strings.Contains(line, "INFO:"), strings.HasPrefix(line, "@"):
+			continue
+		case strings.Contains(line, "Permission denied"):
+			return "the host refused the password"
+		}
+		return line
 	}
 	return fallback.Error()
 }
