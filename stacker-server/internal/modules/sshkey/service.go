@@ -16,6 +16,8 @@ import (
 
 const rsaBits = 4096
 
+const defaultKeyName = "stacker-default"
+
 // Service owns keypair generation and the key folder on disk. The private half
 // only ever leaves this package as a file path.
 type Service struct {
@@ -36,6 +38,28 @@ func (s *Service) Get(id string) (SshKey, error) {
 	return s.repo.Get(id)
 }
 
+// EnsureDefault creates the install-wide key on first run. The database flag,
+// rather than its display name, is the contract that protects it.
+func (s *Service) EnsureDefault() (SshKey, error) {
+	key, err := s.repo.GetDefault()
+	if err == nil {
+		return key, nil
+	}
+	if err != ErrNotFound {
+		return SshKey{}, err
+	}
+
+	key, err = s.create(CreateRequest{Name: defaultKeyName, Type: KeyTypeEd25519}, true)
+	if err == ErrNameTaken {
+		key, err = s.Create(CreateRequest{Name: defaultKeyName + "-key", Type: KeyTypeEd25519})
+		if err == nil {
+			key.IsDefault = true
+			err = s.repo.Save(&key)
+		}
+	}
+	return key, err
+}
+
 // PrivateKeyPath resolves the on-disk private key for a stored key. Other
 // modules (the node key install) use this to hand `-i <path>` to ssh.
 func (s *Service) PrivateKeyPath(id string) (string, error) {
@@ -52,6 +76,10 @@ func (s *Service) PrivateKeyPath(id string) (string, error) {
 // Create generates a fresh keypair, writes both halves to the key folder and
 // records the public half in the database.
 func (s *Service) Create(req CreateRequest) (SshKey, error) {
+	return s.create(req, false)
+}
+
+func (s *Service) create(req CreateRequest, isDefault bool) (SshKey, error) {
 	name := strings.TrimSpace(req.Name)
 	if err := validateName(name); err != nil {
 		return SshKey{}, err
@@ -89,6 +117,7 @@ func (s *Service) Create(req CreateRequest) (SshKey, error) {
 		PublicKey:      publicLine,
 		Fingerprint:    fingerprint(publicKey),
 		PrivateKeyPath: privatePath,
+		IsDefault:      isDefault,
 	}
 
 	if err := s.repo.Create(&key); err != nil {
@@ -108,6 +137,9 @@ func (s *Service) Delete(id string) error {
 	key, err := s.repo.Get(id)
 	if err != nil {
 		return err
+	}
+	if key.IsDefault {
+		return ErrDefaultKey
 	}
 
 	used, err := s.repo.UsedByNodeCount(id)
@@ -132,6 +164,38 @@ func (s *Service) Delete(id string) error {
 
 	s.log.Info("ssh key deleted", "id", id, "name", key.Name)
 	return nil
+}
+
+// Rotate replaces the protected default keypair while retaining its id so node
+// references stay valid. Existing hosts must receive the new public key.
+func (s *Service) Rotate(id string) (SshKey, error) {
+	key, err := s.repo.Get(id)
+	if err != nil {
+		return SshKey{}, err
+	}
+	if !key.IsDefault {
+		return SshKey{}, ErrDefaultKey
+	}
+
+	privatePEM, publicKey, err := generate(key.Type, key.Name)
+	if err != nil {
+		return SshKey{}, err
+	}
+	publicLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(publicKey))) + " " + key.Name
+	if err := os.WriteFile(key.PrivateKeyPath, privatePEM, 0o600); err != nil {
+		return SshKey{}, err
+	}
+	if err := os.WriteFile(key.PrivateKeyPath+".pub", []byte(publicLine+"\n"), 0o644); err != nil {
+		return SshKey{}, err
+	}
+
+	key.PublicKey = publicLine
+	key.Fingerprint = fingerprint(publicKey)
+	if err := s.repo.Save(&key); err != nil {
+		return SshKey{}, err
+	}
+	s.log.Warn("default ssh key rotated", "id", key.ID)
+	return key, nil
 }
 
 // generate produces the OpenSSH-format private key bytes and the public key.

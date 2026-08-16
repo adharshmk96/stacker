@@ -31,5 +31,6 @@ func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
 	keys.GET("", m.handler.list)
 	keys.POST("", m.handler.create)
 	keys.GET("/:id", m.handler.get)
+	keys.POST("/:id/rotate", m.handler.rotate)
 	keys.DELETE("/:id", m.handler.remove)
 }

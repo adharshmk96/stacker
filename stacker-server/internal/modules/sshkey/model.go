@@ -24,6 +24,7 @@ type SshKey struct {
 
 	// PrivateKeyPath points at the file inside the key folder. Kept out of JSON.
 	PrivateKeyPath string `gorm:"not null" json:"-"`
+	IsDefault      bool   `gorm:"not null;default:false;index" json:"isDefault"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

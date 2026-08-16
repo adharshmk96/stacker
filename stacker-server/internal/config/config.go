@@ -22,6 +22,10 @@ type Config struct {
 	LogLevel string
 	// AdvertiseAddr is the host address selected by install.sh for swarm peers.
 	AdvertiseAddr string
+	// TraefikDynamicPath is the installed file-provider config shared with Traefik.
+	TraefikDynamicPath string
+	// StackName prefixes the two Swarm services managed by the Server settings page.
+	StackName string
 }
 
 // Load builds the config from the environment, falling back to the
@@ -30,13 +34,15 @@ func Load() (Config, error) {
 	dataDir := env("STACKER_DATA_DIR", "/data")
 
 	cfg := Config{
-		Addr:          env("STACKER_ADDR", ":8080"),
-		Env:           env("STACKER_ENV", "development"),
-		DataDir:       dataDir,
-		DBPath:        filepath.Join(dataDir, "stacker.db"),
-		KeyDir:        filepath.Join(dataDir, "keys"),
-		LogLevel:      env("STACKER_LOG_LEVEL", "info"),
-		AdvertiseAddr: env("STACKER_ADVERTISE_ADDR", ""),
+		Addr:               env("STACKER_ADDR", ":8080"),
+		Env:                env("STACKER_ENV", "development"),
+		DataDir:            dataDir,
+		DBPath:             filepath.Join(dataDir, "stacker.db"),
+		KeyDir:             filepath.Join(dataDir, "keys"),
+		LogLevel:           env("STACKER_LOG_LEVEL", "info"),
+		AdvertiseAddr:      env("STACKER_ADVERTISE_ADDR", ""),
+		TraefikDynamicPath: env("STACKER_TRAEFIK_DYNAMIC_PATH", "/etc/stacker/traefik/dynamic/stacker.yml"),
+		StackName:          env("STACKER_STACK_NAME", "stacker"),
 	}
 
 	// The key directory holds private keys — 0700 for both it and its parent.

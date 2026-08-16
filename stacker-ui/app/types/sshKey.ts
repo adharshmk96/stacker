@@ -9,11 +9,13 @@ export interface SshKey {
   publicKey: string
   /** SHA256 fingerprint, as printed by `ssh-keygen -lf` */
   fingerprint: string
+  /** Protected install-wide key created on first run. */
+  isDefault: boolean
   createdAt: string
 }
 
 /**
- * Keys are create-and-delete only: renaming or re-keying an existing entry
- * would silently break every Node already trusting it.
+ * User-created keys are create-and-delete only. The protected default key can
+ * be rotated explicitly after warning about existing connections.
  */
 export type SshKeyPayload = Pick<SshKey, 'name' | 'type'>

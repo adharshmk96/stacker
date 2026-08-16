@@ -178,6 +178,9 @@ func (h *Handler) respondSwarm(c *gin.Context, result SwarmResult, err error) {
 		respondError(c, err)
 		return
 	}
+	// Swarm writes return a repository-backed Node, so restore the transient
+	// reachability fields before sending the row back to the UI.
+	h.service.decorate(&result.Node)
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 

@@ -55,5 +55,11 @@ export function useSshKeys() {
     items.value = items.value.filter(item => item.id !== id)
   }
 
-  return { items, pending, error, load, create, remove }
+  async function rotate(id: string) {
+    const key = await api.post<SshKey>(`/ssh-keys/${id}/rotate`)
+    items.value = items.value.map(item => item.id === id ? key : item)
+    return key
+  }
+
+  return { items, pending, error, load, create, remove, rotate }
 }

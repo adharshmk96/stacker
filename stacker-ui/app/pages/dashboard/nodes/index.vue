@@ -217,7 +217,9 @@ const stateMeta: Record<Reachability, { label: string, dot: string, text: string
   }
 }
 
-const stateOf = (node: Node) => stateMeta[node.reachability ?? 'unknown']
+// API rows should always contain a reachability value, but an empty transient
+// value must still render as unknown instead of crashing the whole table row.
+const stateOf = (node: Node) => stateMeta[node.reachability || 'unknown']
 
 /** Ids currently being re-checked, so each row can show its own spinner */
 const testing = ref(new Set<string>())

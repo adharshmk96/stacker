@@ -1,10 +1,52 @@
 package node
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
 )
+
+func TestRespondSwarmDecoratesReachability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	checkedAt := time.Now()
+	service := &Service{health: newHealthCache()}
+	service.health.set(LocalID, health{
+		State:   ReachabilityOnline,
+		At:      checkedAt,
+		Message: "This is the machine stacker runs on",
+	})
+	handler := &Handler{service: service}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+
+	handler.respondSwarm(ctx, SwarmResult{Node: Node{ID: LocalID}}, nil)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	var response struct {
+		Data SwarmResult `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Data.Node.Reachability != ReachabilityOnline {
+		t.Errorf("reachability = %q, want %q", response.Data.Node.Reachability, ReachabilityOnline)
+	}
+	if response.Data.Node.ReachabilityMessage == "" {
+		t.Error("reachability message is empty")
+	}
+	if response.Data.Node.ReachableCheckedAt == nil {
+		t.Error("reachable checked at is nil")
+	}
+}
 
 // ssh-copy-id always opens with an INFO banner on stderr, so the naive
 // "first line of output" reading reported that banner for every failure and

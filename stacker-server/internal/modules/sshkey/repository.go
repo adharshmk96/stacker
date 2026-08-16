@@ -40,6 +40,19 @@ func (r *Repository) Create(key *SshKey) error {
 	return r.db.Create(key).Error
 }
 
+func (r *Repository) GetDefault() (SshKey, error) {
+	var key SshKey
+	err := r.db.First(&key, "is_default = ?", true).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return SshKey{}, ErrNotFound
+	}
+	return key, err
+}
+
+func (r *Repository) Save(key *SshKey) error {
+	return r.db.Save(key).Error
+}
+
 func (r *Repository) Delete(id string) error {
 	res := r.db.Delete(&SshKey{}, "id = ?", id)
 	if res.Error != nil {

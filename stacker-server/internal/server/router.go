@@ -10,6 +10,7 @@ import (
 	"stacker/internal/modules/auth"
 	githubprovider "stacker/internal/modules/github"
 	"stacker/internal/modules/node"
+	"stacker/internal/modules/serversettings"
 	"stacker/internal/modules/sshkey"
 	"stacker/internal/modules/swarm"
 	"stacker/internal/web"
@@ -34,6 +35,9 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	// Modules are constructed here so the dependency direction is visible in
 	// one place: ssh keys first, then nodes which consume the key service.
 	keyModule := sshkey.New(db, cfg.KeyDir, log)
+	if _, err := keyModule.Service.EnsureDefault(); err != nil {
+		return nil, err
+	}
 	nodeModule := node.New(db, keyModule.Service, log)
 
 	// Auth guards every other module, so it is built first — and it is handed
@@ -43,7 +47,10 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 		if err := database.Reset(db, log); err != nil {
 			return err
 		}
-		// The local node is seeded at boot; the wipe took it with it.
+		if _, err := keyModule.Service.EnsureDefault(); err != nil {
+			return err
+		}
+		// Bootstrapped records were removed by the wipe, so recreate both.
 		_, err := nodeModule.Service.EnsureLocal()
 		return err
 	}, log)
@@ -53,6 +60,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	// Swarm browses docker through the nodes it is given, so it is built last.
 	swarmModule := swarm.New(nodeModule.Service, log)
 	githubModule := githubprovider.New(db, log)
+	serverModule := serversettings.New(cfg.TraefikDynamicPath, cfg.StackName)
 
 	// The machine stacker is installed on is a node like any other, so it is
 	// seeded on every start. A failure here is not fatal — the rest of the API
@@ -76,6 +84,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	nodeModule.RegisterRoutes(protected)
 	swarmModule.RegisterRoutes(protected)
 	githubModule.RegisterRoutes(protected)
+	serverModule.RegisterRoutes(protected)
 
 	// The embedded UI is the fallback, so it must be mounted after the API.
 	if err := web.Register(r); err != nil {

@@ -150,9 +150,6 @@ function when(iso: string) {
   return new Date(iso).toLocaleString()
 }
 
-/* ---- reset ---- */
-
-const resetOpen = ref(false)
 </script>
 
 <template>
@@ -294,19 +291,4 @@ const resetOpen = ref(false)
     </ul>
   </SettingsSection>
 
-  <SettingsSection
-    title="Reset all data"
-    description="Empties the database — nodes, SSH keys, sessions and your account. Stacker returns to first run."
-    danger
-  >
-    <UButton
-      label="Reset all data"
-      icon="i-lucide-rotate-ccw"
-      color="error"
-      variant="subtle"
-      @click="resetOpen = true"
-    />
-  </SettingsSection>
-
-  <SettingsResetDataModal v-model:open="resetOpen" />
 </template>

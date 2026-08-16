@@ -16,14 +16,12 @@ const route = useRoute()
 
 const tabs = [
   { key: 'account', label: 'Account', icon: 'i-lucide-circle-user', group: 0 },
+  { key: 'ssh-keys', label: 'SSH Keys', icon: 'i-lucide-key-round', group: 0 },
   { key: 'server', label: 'Server', icon: 'i-lucide-server', group: 0 },
   { key: 'git-provider', label: 'Git Provider', icon: 'i-lucide-git-branch', group: 1 },
   { key: 'registries', label: 'Registries', icon: 'i-lucide-container', group: 1 },
-  { key: 'tokens', label: 'API Tokens', icon: 'i-lucide-key-square', group: 1 },
-  { key: 'notifications', label: 'Notifications', icon: 'i-lucide-bell', group: 2 },
   { key: 'smtp', label: 'SMTP', icon: 'i-lucide-mail', group: 2 },
   { key: 'backup', label: 'Backup', icon: 'i-lucide-database-backup', group: 3 },
-  { key: 'appearance', label: 'Appearance', icon: 'i-lucide-palette', group: 3 }
 ] as const
 
 const tab = computed(() => String(route.params.tab))
@@ -88,14 +86,12 @@ useHead(() => ({ title: `${current.value?.label ?? 'Settings'} · Stacker` }))
         <!-- panel -->
         <div class="min-w-0 flex-1 space-y-6">
           <SettingsAccountSection v-if="tab === 'account'" />
+          <SettingsSshKeysSection v-else-if="tab === 'ssh-keys'" />
           <SettingsServerSection v-else-if="tab === 'server'" />
           <SettingsGitProviderSection v-else-if="tab === 'git-provider'" />
           <SettingsRegistriesSection v-else-if="tab === 'registries'" />
-          <SettingsTokensSection v-else-if="tab === 'tokens'" />
-          <SettingsNotificationsSection v-else-if="tab === 'notifications'" />
           <SettingsSmtpSection v-else-if="tab === 'smtp'" />
           <SettingsBackupSection v-else-if="tab === 'backup'" />
-          <SettingsAppearanceSection v-else-if="tab === 'appearance'" />
         </div>
       </div>
     </template>

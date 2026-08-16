@@ -132,17 +132,22 @@ populate_traefik_config() {
 
 deploy() {
   local source_dir="$1" advertise_addr="$2" host="$3"
-  local node_name stack_file
+  local built_at node_name stack_file
+  built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   node_name="$(hostname -f 2>/dev/null || hostname)"
   stack_file="$RENDER_TMP/stack.yml"
 
   log "Building $IMAGE"
-  docker build --pull -t "$IMAGE" "$source_dir" </dev/null
+  docker build --pull \
+    --build-arg "STACKER_VERSION=$REPOSITORY_REF" \
+    --build-arg "STACKER_BUILT_AT=$built_at" \
+    -t "$IMAGE" "$source_dir" </dev/null
 
   sed \
     -e "s|__STACKER_IMAGE__|$IMAGE|g" \
     -e "s|__STACKER_NODE_NAME__|$node_name|g" \
     -e "s|__STACKER_ADVERTISE_ADDR__|$advertise_addr|g" \
+    -e "s|__STACKER_STACK_NAME__|$STACK_NAME|g" \
     "$source_dir/deploy/stack.yml" > "$stack_file"
 
   log "Deploying $STACK_NAME"

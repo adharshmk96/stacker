@@ -33,8 +33,11 @@ services:
       STACKER_ENV: production
       STACKER_DATA_DIR: /data
       STACKER_ADVERTISE_ADDR: __STACKER_ADVERTISE_ADDR__
+      STACKER_STACK_NAME: __STACKER_STACK_NAME__
+      STACKER_TRAEFIK_DYNAMIC_PATH: /etc/stacker/traefik/dynamic/stacker.yml
     volumes:
       - stacker-data:/data
+      - traefik-config:/etc/stacker/traefik
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - proxy

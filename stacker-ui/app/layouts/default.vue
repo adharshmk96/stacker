@@ -10,7 +10,7 @@ const navUi: NavigationMenu['ui'] = {
 
 const route = useRoute()
 
-// Nodes and SSH Keys are live today; the rest are placeholders for upcoming menus.
+// Infrastructure and application navigation.
 const links = computed<NavigationMenuItem[][]>(() => [
   [
     {
@@ -32,7 +32,6 @@ const links = computed<NavigationMenuItem[][]>(() => [
       to: '/dashboard/swarm/services',
       active: route.path.startsWith('/dashboard/swarm')
     },
-    { label: 'SSH Keys', icon: 'i-lucide-key-round', to: '/dashboard/ssh-keys' }
   ],
   [
     {

@@ -57,12 +57,21 @@ func (h *Handler) remove(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *Handler) rotate(c *gin.Context) {
+	key, err := h.service.Rotate(c.Param("id"))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": key})
+}
+
 // respondError maps this module's sentinel errors onto status codes.
 func respondError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrNameTaken), errors.Is(err, ErrKeyInUse):
+	case errors.Is(err, ErrNameTaken), errors.Is(err, ErrKeyInUse), errors.Is(err, ErrDefaultKey):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrInvalidName), errors.Is(err, ErrUnknownType):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
