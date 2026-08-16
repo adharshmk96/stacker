@@ -16,6 +16,7 @@ const route = useRoute()
 
 const tabs = [
   { key: 'account', label: 'Account', icon: 'i-lucide-circle-user', group: 0 },
+  { key: 'server', label: 'Server', icon: 'i-lucide-server', group: 0 },
   { key: 'git-provider', label: 'Git Provider', icon: 'i-lucide-git-branch', group: 1 },
   { key: 'registries', label: 'Registries', icon: 'i-lucide-container', group: 1 },
   { key: 'tokens', label: 'API Tokens', icon: 'i-lucide-key-square', group: 1 },
@@ -87,6 +88,7 @@ useHead(() => ({ title: `${current.value?.label ?? 'Settings'} · Stacker` }))
         <!-- panel -->
         <div class="min-w-0 flex-1 space-y-6">
           <SettingsAccountSection v-if="tab === 'account'" />
+          <SettingsServerSection v-else-if="tab === 'server'" />
           <SettingsGitProviderSection v-else-if="tab === 'git-provider'" />
           <SettingsRegistriesSection v-else-if="tab === 'registries'" />
           <SettingsTokensSection v-else-if="tab === 'tokens'" />
