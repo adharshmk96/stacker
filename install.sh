@@ -6,7 +6,12 @@ readonly REPOSITORY_URL="${STACKER_REPOSITORY_URL:-https://github.com/adharshmk9
 readonly REPOSITORY_REF="${STACKER_VERSION:-main}"
 readonly STACK_NAME="${STACKER_STACK_NAME:-stacker}"
 readonly IMAGE="${STACKER_IMAGE:-stacker:local}"
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+readonly SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+readonly SCRIPT_DIR="$(
+  if [ -n "$SCRIPT_PATH" ]; then
+    cd "$(dirname "$SCRIPT_PATH")" 2>/dev/null && pwd || true
+  fi
+)"
 
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
