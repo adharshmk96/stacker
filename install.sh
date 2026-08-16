@@ -31,14 +31,14 @@ install_base_tools() {
 
   log "Installing required tools: ${missing[*]}"
   if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl git sed gawk hostname iproute2 ca-certificates
+    apt-get update -qq </dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl git sed gawk hostname iproute2 ca-certificates </dev/null
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y -q curl git sed gawk hostname iproute ca-certificates
+    dnf install -y -q curl git sed gawk hostname iproute ca-certificates </dev/null
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y -q curl git sed gawk hostname iproute ca-certificates
+    yum install -y -q curl git sed gawk hostname iproute ca-certificates </dev/null
   elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache curl git sed gawk hostname iproute2 ca-certificates
+    apk add --no-cache curl git sed gawk hostname iproute2 ca-certificates </dev/null
   else
     die "install curl, git, sed, awk, hostname, iproute2 and CA certificates, then rerun"
   fi
@@ -50,7 +50,7 @@ ensure_docker() {
     curl -fsSL https://get.docker.com | sh
   fi
   if ! docker info >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
-    systemctl enable --now docker
+    systemctl enable --now docker </dev/null
   fi
   docker info >/dev/null 2>&1 || die "Docker is installed but its daemon is unavailable"
 }
@@ -89,7 +89,7 @@ ensure_swarm_manager() {
 
   if [ "$state" = "inactive" ]; then
     log "Initialising Docker Swarm on $address"
-    docker swarm init --advertise-addr "$address"
+    docker swarm init --advertise-addr "$address" </dev/null
   fi
 
   state="$(docker info --format '{{.Swarm.LocalNodeState}}')"
@@ -110,7 +110,7 @@ resolve_source() {
 
   SOURCE_TMP="$(mktemp -d)"
   log "Cloning Stacker ${REPOSITORY_REF}"
-  git clone --quiet --depth 1 --branch "$REPOSITORY_REF" "$REPOSITORY_URL" "$SOURCE_TMP"
+  git clone --quiet --depth 1 --branch "$REPOSITORY_REF" "$REPOSITORY_URL" "$SOURCE_TMP" </dev/null
   SOURCE_DIR="$SOURCE_TMP"
 }
 
@@ -121,13 +121,13 @@ populate_traefik_config() {
   cp "$source_dir/deploy/traefik/traefik.yml" "$RENDER_TMP/traefik.yml"
   sed "s/__STACKER_HOST__/$host/g" "$source_dir/deploy/traefik/dynamic/stacker.yml" > "$RENDER_TMP/dynamic/stacker.yml"
 
-  docker volume create stacker-traefik-config >/dev/null
-  docker volume create stacker-traefik-data >/dev/null
-  docker volume create stacker-data >/dev/null
+  docker volume create stacker-traefik-config </dev/null >/dev/null
+  docker volume create stacker-traefik-data </dev/null >/dev/null
+  docker volume create stacker-data </dev/null >/dev/null
   docker run --rm \
     -v stacker-traefik-config:/target \
     -v "$RENDER_TMP:/source:ro" \
-    alpine:3.23 sh -c 'rm -rf /target/* && cp -R /source/. /target/'
+    alpine:3.23 sh -c 'rm -rf /target/* && cp -R /source/. /target/' </dev/null
 }
 
 deploy() {
@@ -137,7 +137,7 @@ deploy() {
   stack_file="$RENDER_TMP/stack.yml"
 
   log "Building $IMAGE"
-  docker build --pull -t "$IMAGE" "$source_dir"
+  docker build --pull -t "$IMAGE" "$source_dir" </dev/null
 
   sed \
     -e "s|__STACKER_IMAGE__|$IMAGE|g" \
@@ -146,13 +146,13 @@ deploy() {
     "$source_dir/deploy/stack.yml" > "$stack_file"
 
   log "Deploying $STACK_NAME"
-  docker stack deploy --detach=true --resolve-image never -c "$stack_file" "$STACK_NAME"
+  docker stack deploy --detach=true --resolve-image never -c "$stack_file" "$STACK_NAME" </dev/null
 
   # Local image tags and named-volume config do not alter the service specs.
   # Force both services so rerunning the installer always applies the new image
   # and Traefik files.
-  docker service update --force --detach=true "${STACK_NAME}_stacker" >/dev/null
-  docker service update --force --detach=true "${STACK_NAME}_traefik" >/dev/null
+  docker service update --force --detach=true "${STACK_NAME}_stacker" </dev/null >/dev/null
+  docker service update --force --detach=true "${STACK_NAME}_traefik" </dev/null >/dev/null
 }
 
 main() {
