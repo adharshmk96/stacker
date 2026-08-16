@@ -1,14 +1,22 @@
 <script setup lang="ts">
 import type { DropdownMenuItem, NavigationMenuItem, TableColumn } from '@nuxt/ui'
-import type { SwarmAction, SwarmRow } from '~/types/swarm'
+import type { SwarmAction, SwarmCreatePayload, SwarmRow } from '~/types/swarm'
 
 /**
  * One page for every docker resource: the tab is the route, so each list is
  * linkable and the back button moves between them.
+ *
+ * Rows come from `/api/swarm/<resource>`, which runs the matching `docker … ls`
+ * on the manager (swarm-wide resources) or on every node at once (per-node
+ * ones). Row actions post back to the same module.
  */
 
 const route = useRoute()
-const { resources, find, createAction } = useSwarmResources()
+const router = useRouter()
+const toast = useToast()
+
+const { resources, find } = useSwarmResources()
+const swarm = useSwarmApi()
 
 const resource = computed(() => find(String(route.params.resource)))
 
@@ -28,50 +36,67 @@ const tabs = computed<NavigationMenuItem[]>(() =>
     to: `/dashboard/swarm/${item.key}`
   })))
 
-const create = computed(() => resource.value && createAction(resource.value.key))
-
 const search = ref('')
 
-const router = useRouter()
+/**
+ * Node selection lives in the URL (`?node=<id>`) so a filtered list can be
+ * linked to — "the containers on edge-01" is the useful thing to send someone.
+ * It is seeded from the query and written back to it, rather than read through
+ * it, so opening such a link starts filtered.
+ */
+const nodeFilter = ref(String(route.query.node ?? 'all'))
+
+watch(nodeFilter, (value) => {
+  router.replace({ query: value === 'all' ? {} : { node: value } })
+})
 
 /**
- * Node selection lives in the URL (`?node=edge-01`) so a filtered list can be
- * linked to — "the containers on edge-01" is the useful thing to send someone.
+ * Per-node resources are filtered on the server, because filtering there also
+ * means not reaching out to the other nodes at all. Swarm-wide lists come from
+ * the manager whole and are filtered here.
  */
-const nodeFilter = computed({
-  get: () => String(route.query.node ?? 'all'),
-  set: (value) => {
-    router.replace({
-      query: value === 'all' ? {} : { node: value }
-    })
-  }
-})
+const serverFiltered = computed(() => resource.value?.scope === 'node')
+
+function reload() {
+  if (!resource.value) return
+  return swarm.load(resource.value.key, serverFiltered.value ? nodeFilter.value : undefined)
+}
 
 // Filters are per-resource; carrying a node selection onto a list that has no
-// node column would silently hide rows.
-watch(resource, () => {
+// node column would silently hide rows. Only a move between resources clears
+// them — on the first load the filter is whatever the link asked for.
+watch(resource, (now, before) => {
+  if (!before) return
   search.value = ''
-  if (nodeFilter.value !== 'all') nodeFilter.value = 'all'
+  nodeFilter.value = 'all'
 })
 
-/** Which node each row belongs to, for the resources that pin to one. */
-const nodeColumn = computed(() => resource.value?.nodeColumn)
+// Both changes mean a different list. They are watched together so switching
+// tabs with a filter set — which clears the filter above — still loads once.
+watch([resource, nodeFilter], () => {
+  reload()
+}, { immediate: true })
 
-const nodeItems = computed(() => {
-  const column = nodeColumn.value
-  if (!column) return []
+/** Only the resources whose rows say which node they came from can be filtered. */
+const nodeColumn = computed(() =>
+  resource.value?.columns.some(column => column.key === 'node') ? 'node' : undefined)
 
-  const names = [...new Set((resource.value?.rows ?? []).map(row => String(row[column])))].sort()
-  return [{ label: 'All nodes', value: 'all' }, ...names.map(name => ({ label: name, value: name }))]
-})
+const nodeItems = computed(() => [
+  { label: 'All nodes', value: 'all' },
+  ...swarm.nodes.value.map(node => ({ label: node.name, value: node.id }))
+])
+
+/** Names by id, so a row filtered by id still matches the name it displays. */
+const nodeName = (id: string) => swarm.nodes.value.find(node => node.id === id)?.name ?? id
 
 // Each resource has its own columns, so the search box just looks at every cell.
 const rows = computed(() => {
   const term = search.value.trim().toLowerCase()
   const column = nodeColumn.value
 
-  return (resource.value?.rows ?? []).filter((row) => {
-    if (column && nodeFilter.value !== 'all' && String(row[column]) !== nodeFilter.value) return false
+  return swarm.rows.value.filter((row) => {
+    if (column && !serverFiltered.value && nodeFilter.value !== 'all'
+      && row[column] !== nodeName(nodeFilter.value)) return false
     if (!term) return true
     return Object.values(row).some(value => String(value).toLowerCase().includes(term))
   })
@@ -92,19 +117,31 @@ const kindOf = (key: string) =>
 /** States docker reports that are worth colouring rather than reading. */
 const badgeColor = (value: string): 'success' | 'warning' | 'error' | 'neutral' => {
   if (['running', 'active', 'ready', 'overlay'].includes(value)) return 'success'
-  if (['pending', 'starting', 'preparing'].includes(value)) return 'warning'
-  if (['failed', 'exited', 'rejected', 'shutdown'].includes(value)) return 'error'
+  if (['pending', 'starting', 'preparing', 'new', 'assigned', 'accepted'].includes(value)) return 'warning'
+  if (['failed', 'exited', 'rejected', 'shutdown', 'orphaned', 'dead'].includes(value)) return 'error'
   return 'neutral'
 }
 
-const toast = useToast()
+/* ---- actions ---- */
 
-/**
- * Turns the resource's action config into a menu for one row.
- *
- * Everything but the links into Nodes is inert for now — the toast names the
- * call the swarm API will make, which is also the checklist for wiring it up.
- */
+/** The row's docker identifier, which is what the action endpoint takes. */
+const idOf = (row: SwarmRow) => String(row[resource.value?.idField ?? 'name'] ?? '')
+
+/** How a row is named in confirmations and toasts. */
+const labelOf = (row: SwarmRow) =>
+  row.name || (row.repository ? `${row.repository}:${row.tag}` : '') || row.id || ''
+
+const running = ref(false)
+
+/** The row and action a modal is currently asking about. */
+const pendingAction = ref<{ action: SwarmAction, row: SwarmRow } | null>(null)
+const confirmOpen = ref(false)
+const scaleOpen = ref(false)
+const createOpen = ref(false)
+
+const output = ref({ title: '', text: '' })
+const outputOpen = ref(false)
+
 function rowActions(row: SwarmRow): DropdownMenuItem[][] {
   return (resource.value?.actions ?? []).map(group =>
     group.map((action) => {
@@ -119,23 +156,107 @@ function rowActions(row: SwarmRow): DropdownMenuItem[][] {
         ui: { item: reason ? 'cursor-not-allowed' : undefined },
         title: reason,
         to: action.to?.(row),
-        onSelect: action.to ? undefined : () => run(action, row)
+        onSelect: action.to ? undefined : () => start(action, row)
       }
     }))
 }
 
-function run(action: SwarmAction, row: SwarmRow) {
-  const name = row.name ?? row.repository ?? row.id
-  toast.add({
-    title: `${action.label} — not wired yet`,
-    description: `${name} · this runs against the swarm API once it lands.`,
-    icon: action.icon,
-    color: 'neutral'
-  })
+/**
+ * Anything that cannot be undone, and anything that needs a value, stops at a
+ * modal first. Everything else runs on the click.
+ */
+function start(action: SwarmAction, row: SwarmRow) {
+  pendingAction.value = { action, row }
+
+  if (action.prompt === 'scale') {
+    scaleOpen.value = true
+    return
+  }
+  if (action.danger) {
+    confirmOpen.value = true
+    return
+  }
+  run(action, row)
 }
 
-const formatDate = (value: string) =>
-  new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+async function run(action: SwarmAction, row: SwarmRow, replicas?: number) {
+  if (!resource.value) return
+
+  running.value = true
+
+  try {
+    const result = await swarm.action(resource.value.key, {
+      action: action.key,
+      // Pulling an image again needs the reference, not the image id — the id
+      // is what is already on disk.
+      id: action.key === 'pull' ? `${row.repository}:${row.tag}` : idOf(row),
+      node: row.nodeId,
+      replicas
+    })
+
+    confirmOpen.value = false
+    scaleOpen.value = false
+
+    if (action.reads && result.output) {
+      output.value = { title: `${action.label} · ${labelOf(row)}`, text: result.output }
+      outputOpen.value = true
+      return
+    }
+
+    toast.add({ title: result.message, icon: action.icon, color: 'success' })
+    // A mutation changes what the list should say, so it is re-read rather
+    // than patched: docker is the only thing that knows the new state.
+    await reload()
+  } catch (error) {
+    toast.add({
+      title: `Could not ${action.label.replace('…', '').toLowerCase()}`,
+      description: error instanceof Error ? error.message : undefined,
+      icon: 'i-lucide-circle-alert',
+      color: 'error'
+    })
+  } finally {
+    running.value = false
+  }
+}
+
+function onConfirm() {
+  const pending = pendingAction.value
+  if (pending) run(pending.action, pending.row)
+}
+
+function onScale(replicas: number) {
+  const pending = pendingAction.value
+  if (pending) run(pending.action, pending.row, replicas)
+}
+
+async function onCreate(payload: SwarmCreatePayload) {
+  if (!resource.value) return
+
+  running.value = true
+
+  try {
+    const result = await swarm.create(resource.value.key, payload)
+    toast.add({ title: result.message, icon: resource.value.create?.icon, color: 'success' })
+    createOpen.value = false
+    await reload()
+  } catch (error) {
+    toast.add({
+      title: `Could not create the ${resource.value.singular}`,
+      description: error instanceof Error ? error.message : undefined,
+      icon: 'i-lucide-circle-alert',
+      color: 'error'
+    })
+  } finally {
+    running.value = false
+  }
+}
+
+const formatDate = (value: string) => {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.valueOf())
+    ? value
+    : parsed.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+}
 </script>
 
 <template>
@@ -152,20 +273,15 @@ const formatDate = (value: string) =>
             icon="i-lucide-refresh-cw"
             color="neutral"
             variant="subtle"
-            disabled
-            title="Live data lands with the swarm API"
+            :loading="swarm.pending.value"
+            @click="reload()"
           />
           <UButton
-            v-if="create"
-            :label="create.label"
-            :icon="create.icon"
+            v-if="resource?.create"
+            :label="resource.create.label"
+            :icon="resource.create.icon"
             class="shadow-lg shadow-primary/20"
-            @click="toast.add({
-              title: `${create.label} — not wired yet`,
-              description: 'The form lands with the swarm API.',
-              icon: create.icon,
-              color: 'neutral'
-            })"
+            @click="createOpen = true"
           />
         </template>
       </UDashboardNavbar>
@@ -177,11 +293,23 @@ const formatDate = (value: string) =>
       <SwarmTopology class="shrink-0" />
 
       <UAlert
-        icon="i-lucide-flask-conical"
-        color="neutral"
+        v-if="swarm.error.value"
+        icon="i-lucide-circle-alert"
+        color="error"
         variant="subtle"
-        title="Placeholder data"
-        description="These lists are static samples and the actions are inert. Both switch to live docker data once the swarm API is in."
+        title="Could not read the swarm"
+        :description="swarm.error.value"
+        class="mt-4 shrink-0"
+      />
+
+      <UAlert
+        v-for="failure in swarm.nodeErrors.value"
+        :key="failure.node"
+        icon="i-lucide-server-off"
+        color="warning"
+        variant="subtle"
+        :title="`${failure.node} did not answer`"
+        :description="failure.message"
         class="mt-4 shrink-0"
       />
 
@@ -205,7 +333,7 @@ const formatDate = (value: string) =>
 
         <div class="flex shrink-0 items-center gap-2">
           <USelect
-            v-if="nodeItems.length"
+            v-if="nodeColumn && swarm.nodes.value.length"
             v-model="nodeFilter"
             :items="nodeItems"
             value-key="value"
@@ -236,6 +364,7 @@ const formatDate = (value: string) =>
       <UTable
         :data="rows"
         :columns="columns"
+        :loading="swarm.pending.value"
         class="stacker-table mt-4 shrink-0 rounded-lg border border-default bg-default/60 backdrop-blur"
         :ui="{ tr: 'transition-colors hover:bg-elevated/40' }"
       >
@@ -299,10 +428,39 @@ const formatDate = (value: string) =>
       </UTable>
 
       <p v-if="resource" class="mt-4 border-t border-default pt-4 text-sm text-muted">
-        {{ rows.length }} of {{ resource.rows.length }}
-        {{ resource.rows.length === 1 ? resource.singular : resource.label.toLowerCase() }}
-        <template v-if="nodeColumn && nodeFilter !== 'all'"> on {{ nodeFilter }}</template>
+        {{ rows.length }} of {{ swarm.rows.value.length }}
+        {{ swarm.rows.value.length === 1 ? resource.singular : resource.label.toLowerCase() }}
       </p>
+
+      <SwarmOutputModal v-model:open="outputOpen" :title="output.title" :output="output.text" />
+
+      <SwarmConfirmModal
+        v-if="pendingAction"
+        v-model:open="confirmOpen"
+        :title="pendingAction.action.label"
+        :target="labelOf(pendingAction.row)"
+        :description="`will be removed from ${pendingAction.row.node ?? 'the swarm'}. This cannot be undone.`"
+        :loading="running"
+        @confirm="onConfirm"
+      />
+
+      <SwarmScaleModal
+        v-if="pendingAction"
+        v-model:open="scaleOpen"
+        :service="labelOf(pendingAction.row)"
+        :replicas="String(pendingAction.row.replicas ?? '')"
+        :loading="running"
+        @confirm="onScale"
+      />
+
+      <SwarmCreateModal
+        v-if="resource?.create"
+        v-model:open="createOpen"
+        :form="resource.create"
+        :nodes="swarm.nodes.value"
+        :loading="running"
+        @confirm="onCreate"
+      />
     </template>
   </UDashboardPanel>
 </template>

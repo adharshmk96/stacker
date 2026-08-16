@@ -4,20 +4,36 @@ import type { Node } from '~/types/node'
 /**
  * The swarm at a glance: managers on top, workers below, joined by connectors.
  *
- * Nodes are the real ones from `/api/nodes` — role, address and errors are
- * already read from docker there. Only the per-node task counts are placeholder.
+ * Nodes come from `/api/nodes`, where role, address and errors are already read
+ * from docker; the task counts come from `/api/swarm/tasks`, which the server
+ * stamps with the stacker node each task is running on.
  */
 
 const { items, pending, load } = useNodes()
+const tasks = useSwarmApi()
 
-onMounted(() => load())
+onMounted(() => {
+  load()
+  // A failure here only costs the counts, so it is never surfaced: the alert
+  // for an unreadable swarm belongs to the list below, not to this summary.
+  tasks.load('tasks')
+})
+
+/** Running tasks per node id — what the node is actually carrying right now. */
+const taskCounts = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const task of tasks.rows.value) {
+    if (task.state !== 'running' || !task.nodeId) continue
+    counts[task.nodeId] = (counts[task.nodeId] ?? 0) + 1
+  }
+  return counts
+})
 
 const managers = computed(() => items.value.filter(node => node.swarmRole === 'manager'))
 const workers = computed(() => items.value.filter(node => node.swarmRole === 'worker'))
 const unconfigured = computed(() => items.value.filter(node => node.swarmRole === 'none'))
 
-/** Placeholder until the API reports real per-node task counts. */
-const taskCount = (node: Node) => (node.id.charCodeAt(0) % 4) + 1
+const taskCount = (node: Node) => taskCounts.value[node.id] ?? 0
 
 const leader = computed(() => managers.value[0])
 </script>

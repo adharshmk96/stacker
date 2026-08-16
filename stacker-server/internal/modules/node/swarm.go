@@ -138,6 +138,52 @@ func (r runner) docker(ctx context.Context, item Node, args ...string) (string, 
 	return out, err
 }
 
+// dockerInput is docker() with a payload piped to the command's stdin. It
+// exists for the commands that read their content that way — deploying a
+// compose file, creating a secret — where passing the value as an argument
+// would put it on the process list of whichever host runs it.
+//
+// The sudo retry docker() does is deliberately not repeated here: stdin has
+// already been consumed by the first attempt, so a retry would send an empty
+// payload. A node whose socket needs sudo fails with docker's own message.
+func (r runner) dockerInput(ctx context.Context, item Node, stdin string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, swarmCommandTimeout)
+	defer cancel()
+
+	argv := append([]string{"docker"}, args...)
+
+	var cmd *exec.Cmd
+	if item.Local {
+		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...)
+	} else {
+		keyPath, err := r.keys.PrivateKeyPath(item.SshKeyID)
+		if err != nil {
+			return "", ErrSshKeyMissing
+		}
+		cmd = exec.CommandContext(ctx, "ssh",
+			"-i", keyPath,
+			"-p", strconv.Itoa(portOrDefault(item.Port)),
+			"-o", "BatchMode=yes",
+			"-o", "IdentitiesOnly=yes",
+			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", fmt.Sprintf("ConnectTimeout=%d", int(sshConnectTimeout.Seconds())),
+			item.Ssh,
+			shellJoin(argv),
+		)
+	}
+	cmd.Stdin = strings.NewReader(stdin)
+
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		if ctx.Err() != nil {
+			return text, fmt.Errorf("%w: %s", ErrSwarmUnreachable, "the command timed out")
+		}
+		return text, fmt.Errorf("%w: %s", ErrSwarmCommand, firstLine(text, err))
+	}
+	return text, nil
+}
+
 // state reads the node's current swarm membership straight from docker.
 func (r runner) state(ctx context.Context, item Node) (swarmState, error) {
 	const format = "{{.Swarm.LocalNodeState}}\t{{.Swarm.NodeID}}\t{{.Swarm.ControlAvailable}}"
