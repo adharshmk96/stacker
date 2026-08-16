@@ -22,6 +22,18 @@ const toast = useToast()
 
 const isInit = computed(() => !!props.node?.local)
 
+/**
+ * A node that already holds a role is being *re*-configured, which is a
+ * different thing to explain: the run is a repair, and on a healthy host it
+ * changes nothing because every step re-checks before it acts.
+ */
+const isRerun = computed(() => !!props.node && props.node.swarmRole !== 'none')
+
+const title = computed(() => {
+  if (isRerun.value) return 'Reconfigure node'
+  return isInit.value ? 'Enable swarm' : 'Configure node'
+})
+
 const advertiseAddr = ref('')
 const job = ref<ProvisionJob | null>(null)
 const starting = ref(false)
@@ -148,15 +160,21 @@ const stepMeta: Record<StepState, { icon: string, class: string, spin?: boolean 
 const actionLabel = computed(() => {
   if (running.value) return 'Configuring…'
   if (job.value?.state === 'failed') return 'Try again'
+  if (isRerun.value) return 'Reconfigure'
   return isInit.value ? 'Enable swarm' : 'Configure node'
 })
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="isInit ? 'Enable swarm' : 'Configure node'">
+  <UModal v-model:open="open" :title="title">
     <template #body>
       <div class="space-y-4">
-        <p v-if="isInit" class="text-sm text-muted">
+        <p v-if="isRerun" class="text-sm text-muted">
+          <strong class="text-highlighted">{{ node?.name }}</strong> is already a
+          {{ node?.swarmRole }}, so this re-runs the same checks: anything still in place is
+          skipped, and anything missing — docker, the daemon, swarm membership — is put back.
+        </p>
+        <p v-else-if="isInit" class="text-sm text-muted">
           <strong class="text-highlighted">{{ node?.name }}</strong> will be checked, given docker
           if it is missing, and made the swarm manager. Every node configured afterwards joins it.
         </p>
@@ -184,8 +202,10 @@ const actionLabel = computed(() => {
           variant="subtle"
         />
 
+        <!-- Only meaningful while creating the swarm: a manager that already
+             exists keeps the address it advertised at init. -->
         <UFormField
-          v-if="isInit && job?.state !== 'running' && job?.state !== 'succeeded'"
+          v-if="isInit && !isRerun && job?.state !== 'running' && job?.state !== 'succeeded'"
           label="Advertise address"
           description="The address other nodes reach this machine on. Leave blank to detect it — set it when this host has more than one network interface."
         >

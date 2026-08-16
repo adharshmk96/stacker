@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -360,6 +361,78 @@ func (s *Service) RefreshSwarm(ctx context.Context, id string) (SwarmResult, err
 		return SwarmResult{Node: item}, err
 	}
 	return SwarmResult{Node: item, Message: swarmSummary(item)}, nil
+}
+
+// RefreshAll re-reads the swarm state of every configured node at once.
+//
+// It exists because a node's role is only ever what stacker last saw, and the
+// host can change underneath it: docker removed, a rebuilt machine, someone
+// running `docker swarm leave` by hand. The page calls this on load, so what
+// the table shows is what docker says now rather than what it said the last
+// time someone clicked something.
+//
+// Nodes are read in parallel — every reading is an ssh round trip — but written
+// one at a time, because sqlite takes one writer and a sweep is not worth
+// contending over. A node that cannot be read is not an error for the sweep:
+// its reason is recorded on the row, which is the whole point of running it.
+func (s *Service) RefreshAll(ctx context.Context) ([]Node, error) {
+	items, err := s.repo.List()
+	if err != nil {
+		return nil, err
+	}
+
+	type reading struct {
+		state swarmState
+		err   error
+	}
+
+	readings := make([]*reading, len(items))
+	unlocks := make([]func(), len(items))
+	var wg sync.WaitGroup
+
+	for i := range items {
+		// A node that has never been configured has no swarm state to read,
+		// and no docker worth reaching for.
+		if items[i].SwarmRole == SwarmRoleNone {
+			continue
+		}
+		// A node mid-configure is being written by that run; reading it here
+		// would only race to store an answer that is about to change.
+		unlock, err := s.lock(items[i].ID)
+		if err != nil {
+			continue
+		}
+		unlocks[i] = unlock
+
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			state, err := s.rt.state(ctx, items[i])
+			readings[i] = &reading{state: state, err: err}
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range items {
+		if unlocks[i] != nil {
+			defer unlocks[i]()
+		}
+		if readings[i] == nil {
+			continue
+		}
+
+		if readings[i].err != nil {
+			s.recordSwarmFailure(items[i], readings[i].err) //nolint:errcheck // stored on the row
+			continue
+		}
+		if _, err := s.applyState(items[i], readings[i].state, items[i].SwarmAddr); err != nil {
+			s.log.Error("could not record the swarm state", "node", items[i].Name, "error", err)
+		}
+	}
+
+	// Re-read rather than patch the slice in place: both branches above wrote
+	// through the repository, so this is the one copy that is certainly current.
+	return s.List()
 }
 
 // roleSettleTimeout bounds how long a promote or demote waits for the node to

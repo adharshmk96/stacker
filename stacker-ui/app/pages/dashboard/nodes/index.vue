@@ -17,23 +17,50 @@ const {
   promoteSwarm,
   demoteSwarm,
   leaveSwarm,
-  refreshSwarm
+  refreshSwarm,
+  refreshSwarmAll,
+  swarmProblems
 } = useNodes()
 
 /** How often the status column re-probes every host, in ms */
 const pingInterval = 30_000
 
+/** True while the load-time swarm sweep is still running. */
+const syncing = ref(false)
+
 // Client-side only: the stacker server is a local daemon, so there is nothing
 // for the SSR pass to talk to.
 onMounted(async () => {
   await load()
+
   // Reachability is never stored, so the rows arrive `unknown` until a sweep
   // has run; from then on the timer keeps the column honest.
   pingAll()
 
+  // Swarm state is stored, which is exactly why it needs re-reading: the row
+  // says what stacker last saw, and the host may have changed since. Doing it
+  // on every load means a node that lost docker says so before anyone tries to
+  // deploy to it. It is not on the timer — each node costs an ssh round trip
+  // and a `docker info`, which is too much to repeat every 30 seconds.
+  syncing.value = true
+  refreshSwarmAll().finally(() => {
+    syncing.value = false
+  })
+
   const timer = setInterval(pingAll, pingInterval)
   onBeforeUnmount(() => clearInterval(timer))
 })
+
+/** Re-runs both sweeps, for the toolbar's refresh. */
+async function onRefresh() {
+  syncing.value = true
+  try {
+    await Promise.all([load(true), pingAll()])
+    await refreshSwarmAll()
+  } finally {
+    syncing.value = false
+  }
+}
 
 const search = ref('')
 const stateFilter = ref<Reachability | 'all'>('all')
@@ -365,6 +392,15 @@ function swarmActions(node: Node): DropdownMenuItem[] {
       label: 'Refresh swarm state',
       icon: 'i-lucide-refresh-cw',
       onSelect: () => runSwarm(node, refreshSwarm, 'Refresh swarm state')
+    },
+    // A node's role is what stacker last saw, not a guarantee it still holds:
+    // a rebuilt host loses the docker stacker installed while the row goes on
+    // claiming worker. Re-running the checklist puts it right, and every step
+    // re-checks before it acts, so it is safe on a node that is simply fine.
+    {
+      label: 'Reconfigure',
+      icon: 'i-lucide-wrench',
+      onSelect: () => onConfigure(node)
     }
   ]
 
@@ -432,6 +468,15 @@ const formatDate = (value: string) =>
         </template>
 
         <template #right>
+          <UButton
+            label="Refresh"
+            icon="i-lucide-refresh-cw"
+            color="neutral"
+            variant="subtle"
+            :loading="syncing"
+            title="Re-check every host over SSH and re-read its swarm state"
+            @click="onRefresh"
+          />
           <UButton
             label="Add node"
             icon="i-lucide-plus"
@@ -527,6 +572,28 @@ const formatDate = (value: string) =>
         variant="subtle"
         class="mb-4 shrink-0"
         :actions="[{ label: 'Retry', color: 'neutral', variant: 'subtle', onClick: () => load(true) }]"
+      />
+
+      <!--
+        A node whose stored role no longer matches its host. The row shows the
+        reason too, but a node that has quietly stopped being usable is worth
+        saying once at the top — it is why a deploy would fail later.
+      -->
+      <UAlert
+        v-for="node in swarmProblems"
+        :key="node.id"
+        :title="`${node.name} is not answering as a ${swarmMeta[node.swarmRole].label.toLowerCase()}`"
+        :description="node.swarmError"
+        icon="i-lucide-triangle-alert"
+        color="warning"
+        variant="subtle"
+        class="mb-4 shrink-0"
+        :actions="[{
+          label: 'Reconfigure',
+          color: 'neutral',
+          variant: 'subtle',
+          onClick: () => onConfigure(node)
+        }]"
       />
 
       <UTable
@@ -646,12 +713,22 @@ const formatDate = (value: string) =>
               v-if="row.original.swarmError"
               name="i-lucide-triangle-alert"
               class="size-4 shrink-0 text-warning"
-              :title="row.original.swarmError"
             />
           </div>
 
+          <!--
+            The reason is spelled out rather than left in a tooltip: it is the
+            difference between "worker" meaning ready and meaning stale, and a
+            tooltip is not somewhere a user thinks to look.
+          -->
+          <!-- Narrow enough to wrap rather than widen the table past its
+               actions column. -->
+          <p v-if="row.original.swarmError" class="mt-1 max-w-44 text-xs text-warning">
+            {{ row.original.swarmError }}
+          </p>
+
           <p
-            v-if="row.original.swarmRole === 'manager' && row.original.swarmAddr"
+            v-else-if="row.original.swarmRole === 'manager' && row.original.swarmAddr"
             class="mt-1 font-mono text-xs text-dimmed"
           >
             {{ row.original.swarmAddr }}:2377

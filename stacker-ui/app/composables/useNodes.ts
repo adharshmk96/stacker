@@ -186,6 +186,29 @@ export function useNodes() {
   /** Re-reads the node's real state from docker, catching changes made outside stacker. */
   const refreshSwarm = (node: Node) => swarmAction(node, 'refresh')
 
+  /**
+   * Re-reads every configured node's swarm state and writes the rows back.
+   *
+   * A node's role is only what stacker last saw, so the page runs this on load:
+   * a host that lost docker, or left the swarm by hand, then explains itself in
+   * its own row instead of looking healthy until someone acts on it.
+   *
+   * Failure is never fatal — the server already records each node's own reason
+   * on its row, and a sweep that could not run at all is covered by the page's
+   * error banner.
+   */
+  async function refreshSwarmAll() {
+    try {
+      const list = await api.post<Node[]>('/nodes/refresh-swarm', {})
+      items.value = list ?? []
+    } catch {
+      // Leave the rows as they stand.
+    }
+  }
+
+  /** Nodes whose last swarm reading failed, for the page's summary banner. */
+  const swarmProblems = computed(() => items.value.filter(item => !!item.swarmError))
+
   /** True once some node is a manager — nothing can join before that. */
   const hasManager = computed(() => items.value.some(item => item.swarmRole === 'manager'))
 
@@ -208,6 +231,8 @@ export function useNodes() {
     promoteSwarm,
     demoteSwarm,
     leaveSwarm,
-    refreshSwarm
+    refreshSwarm,
+    refreshSwarmAll,
+    swarmProblems
   }
 }

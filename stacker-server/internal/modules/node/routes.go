@@ -37,6 +37,9 @@ func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
 	items.POST("/install-key", m.handler.installKey)
 	// A reachability sweep over every node at once — what the table polls.
 	items.POST("/ping", m.handler.pingAll)
+	// The same sweep for swarm state, which the page runs on load so a host
+	// that changed behind stacker's back shows up straight away.
+	items.POST("/refresh-swarm", m.handler.refreshSwarmAll)
 
 	byID := items.Group("/:id", requireID())
 	byID.GET("", m.handler.get)

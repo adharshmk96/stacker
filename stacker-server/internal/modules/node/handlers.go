@@ -55,6 +55,17 @@ func (h *Handler) ping(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": item})
 }
 
+// refreshSwarmAll re-reads every configured node's swarm state and answers with
+// the refreshed list. Like pingAll it is a POST: it reaches out to every host.
+func (h *Handler) refreshSwarmAll(c *gin.Context) {
+	items, err := h.service.RefreshAll(c.Request.Context())
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items})
+}
+
 func (h *Handler) create(c *gin.Context) {
 	var req CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
