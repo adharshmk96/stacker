@@ -23,19 +23,30 @@ export function useGitHub() {
   }
 
   async function create(name: string, organization = '') {
-    const result = await api.post<GitHubManifestStart>('/github/apps', {
-      name, organization, baseUrl: window.location.origin
-    })
-    const form = document.createElement('form')
-    form.method = 'POST'
-    form.action = result.url
-    const manifest = document.createElement('input')
-    manifest.type = 'hidden'
-    manifest.name = 'manifest'
-    manifest.value = JSON.stringify(result.manifest)
-    form.appendChild(manifest)
-    document.body.appendChild(form)
-    form.submit()
+    const target = 'stacker-github-app'
+    const githubTab = window.open('', target)
+    if (!githubTab) throw new Error('Allow popups for Stacker to continue with GitHub')
+
+    try {
+      const result = await api.post<GitHubManifestStart>('/github/apps', {
+        name, organization, baseUrl: window.location.origin
+      })
+      const form = document.createElement('form')
+      form.method = 'POST'
+      form.action = result.url
+      form.target = target
+      const manifest = document.createElement('input')
+      manifest.type = 'hidden'
+      manifest.name = 'manifest'
+      manifest.value = JSON.stringify(result.manifest)
+      form.appendChild(manifest)
+      document.body.appendChild(form)
+      form.submit()
+      form.remove()
+    } catch (error) {
+      githubTab.close()
+      throw error
+    }
   }
 
   function install() {
