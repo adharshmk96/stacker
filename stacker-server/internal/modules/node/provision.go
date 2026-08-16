@@ -98,8 +98,6 @@ type provisionCtx struct {
 	// supports Linux only, so those steps stand down and the swarm step still
 	// runs.
 	skipInstall bool
-	// advertiseAddr is the override passed to a manager init.
-	advertiseAddr string
 }
 
 // step is one entry in the checklist. run reports what it did; returning
@@ -128,10 +126,13 @@ func (s *Service) steps() []step {
 // Provision runs the checklist against a node in the background and returns the
 // job immediately: installing docker takes minutes, far longer than a request
 // should be held open. The UI polls ProvisionStatus for progress.
-func (s *Service) Provision(id string, req ConfigureRequest) (ProvisionJob, error) {
+func (s *Service) Provision(id string) (ProvisionJob, error) {
 	item, err := s.repo.Get(id)
 	if err != nil {
 		return ProvisionJob{}, err
+	}
+	if item.Local {
+		return ProvisionJob{}, ErrLocalSetupManaged
 	}
 
 	// A node stacker cannot log into cannot be provisioned, and every step
@@ -169,7 +170,7 @@ func (s *Service) Provision(id string, req ConfigureRequest) (ProvisionJob, erro
 		ctx, cancel := context.WithTimeout(context.Background(), provisionMaxRuntime)
 		defer cancel()
 
-		s.runSteps(ctx, item, req, job)
+		s.runSteps(ctx, item, job)
 	}()
 
 	return *s.snapshot(job), nil
@@ -188,8 +189,8 @@ func (s *Service) ProvisionStatus(id string) (ProvisionJob, error) {
 }
 
 // runSteps walks the checklist, stopping at the first hard failure.
-func (s *Service) runSteps(ctx context.Context, item Node, req ConfigureRequest, job *ProvisionJob) {
-	p := &provisionCtx{node: item, advertiseAddr: req.AdvertiseAddr}
+func (s *Service) runSteps(ctx context.Context, item Node, job *ProvisionJob) {
+	p := &provisionCtx{node: item}
 
 	for i, st := range s.steps() {
 		s.setStep(job, i, StepRunning, "", true)
@@ -367,40 +368,17 @@ func (s *Service) stepAccess(ctx context.Context, p *provisionCtx) (StepState, s
 // silent firewall change is exactly the kind of surprise a Configure button
 // should not spring.
 func (s *Service) stepPorts(ctx context.Context, p *provisionCtx) (StepState, string, error) {
-	// A manager is the node others connect *to*, so its inbound rules are what
-	// matter. A worker only makes outbound connections here.
-	if !p.node.Local && !p.isManagerTarget() {
-		return StepSkipped, "Only managers accept inbound swarm traffic", nil
-	}
-
-	out, err := s.rt.shell(ctx, p.node, probeTimeout,
-		"if command -v ufw >/dev/null 2>&1; then ufw status 2>/dev/null | head -1; "+
-			"elif command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --state 2>/dev/null; fi")
-	if err != nil {
-		return StepWarned, "Could not read the firewall state", nil
-	}
-
-	status := strings.ToLower(lastLine(out))
-	if strings.Contains(status, "active") || strings.Contains(status, "running") {
-		return StepWarned, "A firewall is active — allow 2377/tcp, 7946/tcp+udp and 4789/udp between your nodes", nil
-	}
-	return StepDone, "No blocking firewall detected", nil
+	return StepSkipped, "Only managers accept inbound swarm traffic", nil
 }
 
-// stepSwarm is the point of the whole checklist: init on the local node, join
-// on every other one. It reuses the same code the direct swarm actions call.
+// stepSwarm joins the remote node to the installer-created manager.
 func (s *Service) stepSwarm(ctx context.Context, p *provisionCtx) (StepState, string, error) {
 	item, err := s.repo.Get(p.node.ID)
 	if err != nil {
 		return StepFailed, "", err
 	}
 
-	var result SwarmResult
-	if item.Local {
-		result, err = s.initManager(ctx, item, p.advertiseAddr)
-	} else {
-		result, err = s.joinWorker(ctx, item)
-	}
+	result, err := s.joinWorker(ctx, item)
 	if err != nil {
 		return StepFailed, "", err
 	}
@@ -419,10 +397,6 @@ func (p *provisionCtx) privileged(script string) string {
 	}
 	return p.sudo + " sh -c " + shellQuote(script)
 }
-
-// isManagerTarget reports whether this run ends with the node becoming a
-// manager, which is only the local node's bootstrap path.
-func (p *provisionCtx) isManagerTarget() bool { return p.node.Local }
 
 // setStep updates one line of the checklist under the lock, since the UI polls
 // it while the job's goroutine writes it.

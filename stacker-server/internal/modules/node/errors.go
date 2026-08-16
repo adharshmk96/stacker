@@ -3,12 +3,13 @@ package node
 import "errors"
 
 var (
-	ErrNotFound      = errors.New("node not found")
-	ErrNameTaken     = errors.New("a node with that name already exists")
-	ErrInvalidSsh    = errors.New("ssh must be in user@host form")
-	ErrSshKeyMissing = errors.New("the referenced ssh key does not exist")
-	ErrLocalNode     = errors.New("the local node cannot be deleted")
-	ErrCopyIDMissing = errors.New("sshpass and ssh-copy-id are required to install a key")
+	ErrNotFound          = errors.New("node not found")
+	ErrNameTaken         = errors.New("a node with that name already exists")
+	ErrInvalidSsh        = errors.New("ssh must be in user@host form")
+	ErrSshKeyMissing     = errors.New("the referenced ssh key does not exist")
+	ErrLocalNode         = errors.New("the local node cannot be deleted")
+	ErrLocalSetupManaged = errors.New("the local swarm manager is configured by install.sh; rerun the installer")
+	ErrCopyIDMissing     = errors.New("sshpass and ssh-copy-id are required to install a key")
 	// ErrPasswordRequired is only reached when the key is not already installed:
 	// a repeat install short-circuits before the password is looked at.
 	ErrPasswordRequired = errors.New("a password is required to install the key on this host for the first time")
@@ -21,7 +22,7 @@ var (
 	// text is docker's own message, which is what the user needs to read.
 	ErrSwarmCommand     = errors.New("the docker command failed")
 	ErrAdvertiseAddr    = errors.New("no advertise address")
-	ErrNoManager        = errors.New("there is no swarm manager yet — configure the local node first")
+	ErrNoManager        = errors.New("there is no swarm manager yet — rerun install.sh on the host")
 	ErrManagerUnhealthy = errors.New("the swarm manager is not reachable, so no node can join right now")
 	ErrAlreadyInSwarm   = errors.New("this node already belongs to a swarm")
 	ErrForeignSwarm     = errors.New("this node already belongs to a different swarm — make it leave that one before configuring it here")

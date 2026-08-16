@@ -1,0 +1,63 @@
+version: "3.9"
+
+services:
+  traefik:
+    image: traefik:v3.6
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+    volumes:
+      - traefik-config:/etc/traefik:ro
+      - traefik-data:/data
+    networks:
+      - proxy
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        order: stop-first
+
+  stacker:
+    image: __STACKER_IMAGE__
+    hostname: __STACKER_NODE_NAME__
+    environment:
+      STACKER_ADDR: :8080
+      STACKER_ENV: production
+      STACKER_DATA_DIR: /data
+      STACKER_ADVERTISE_ADDR: __STACKER_ADVERTISE_ADDR__
+    volumes:
+      - stacker-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - proxy
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+networks:
+  proxy:
+    driver: overlay
+    attachable: true
+
+volumes:
+  stacker-data:
+    name: stacker-data
+    external: true
+  traefik-config:
+    name: stacker-traefik-config
+    external: true
+  traefik-data:
+    name: stacker-traefik-data
+    external: true

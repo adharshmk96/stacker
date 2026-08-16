@@ -72,7 +72,7 @@ const leader = computed(() => managers.value[0])
     >
       <UIcon name="i-lucide-boxes" class="size-8 text-dimmed" />
       <p class="text-sm text-muted">
-        No swarm yet. Enable it on the local node to create the control plane.
+        No swarm manager detected. Rerun install.sh on the host to restore it.
       </p>
       <UButton label="Go to Nodes" color="neutral" variant="subtle" to="/dashboard/nodes" />
     </div>

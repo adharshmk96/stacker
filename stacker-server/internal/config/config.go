@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 )
 
@@ -21,23 +20,23 @@ type Config struct {
 	KeyDir string
 
 	LogLevel string
+	// AdvertiseAddr is the host address selected by install.sh for swarm peers.
+	AdvertiseAddr string
 }
 
 // Load builds the config from the environment, falling back to the
 // platform-specific application data directory.
 func Load() (Config, error) {
-	dataDir, err := DataDir()
-	if err != nil {
-		return Config{}, err
-	}
+	dataDir := env("STACKER_DATA_DIR", "/data")
 
 	cfg := Config{
-		Addr:     env("STACKER_ADDR", ":8080"),
-		Env:      env("STACKER_ENV", "development"),
-		DataDir:  dataDir,
-		DBPath:   filepath.Join(dataDir, "stacker.db"),
-		KeyDir:   filepath.Join(dataDir, "keys"),
-		LogLevel: env("STACKER_LOG_LEVEL", "info"),
+		Addr:          env("STACKER_ADDR", ":8080"),
+		Env:           env("STACKER_ENV", "development"),
+		DataDir:       dataDir,
+		DBPath:        filepath.Join(dataDir, "stacker.db"),
+		KeyDir:        filepath.Join(dataDir, "keys"),
+		LogLevel:      env("STACKER_LOG_LEVEL", "info"),
+		AdvertiseAddr: env("STACKER_ADVERTISE_ADDR", ""),
 	}
 
 	// The key directory holds private keys — 0700 for both it and its parent.
@@ -51,38 +50,6 @@ func Load() (Config, error) {
 // IsProduction reports whether the server should hide internal error details.
 func (c Config) IsProduction() bool {
 	return c.Env == "production"
-}
-
-// DataDir resolves the application data directory without creating anything,
-// so callers that only need the path (like `stacker uninstall`) don't recreate
-// a directory they are about to remove.
-func DataDir() (string, error) {
-	if dir := os.Getenv("STACKER_DATA_DIR"); dir != "" {
-		return dir, nil
-	}
-	return defaultDataDir()
-}
-
-func defaultDataDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		return filepath.Join(home, "Library", "Application Support", "stacker"), nil
-	case "windows":
-		if local := os.Getenv("LOCALAPPDATA"); local != "" {
-			return filepath.Join(local, "stacker"), nil
-		}
-		return filepath.Join(home, "AppData", "Local", "stacker"), nil
-	default:
-		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-			return filepath.Join(xdg, "stacker"), nil
-		}
-		return filepath.Join(home, ".local", "share", "stacker"), nil
-	}
 }
 
 func env(key, fallback string) string {

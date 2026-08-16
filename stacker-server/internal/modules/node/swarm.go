@@ -275,39 +275,6 @@ func lastLine(out string) string {
 	return ""
 }
 
-// advertiseAddr decides which address a manager tells the rest of the swarm to
-// reach it on. A remote node is reached at its ssh host, which is by definition
-// an address that works from here. The local node has no such hint, so its
-// outbound address is used — and the user can always override it.
-func advertiseAddr(item Node, override string) (string, error) {
-	if addr := strings.TrimSpace(override); addr != "" {
-		return addr, nil
-	}
-	if !item.Local {
-		if _, host := splitSsh(item.Ssh); host != "" {
-			return host, nil
-		}
-	}
-	return outboundIP()
-}
-
-// outboundIP is the address this machine uses to reach the outside world. The
-// dial is to a UDP address, so no packet is actually sent — it only asks the
-// routing table which interface would be picked.
-func outboundIP() (string, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return "", fmt.Errorf("%w: could not work out this machine's address — set one explicitly", ErrAdvertiseAddr)
-	}
-	defer conn.Close()
-
-	addr, ok := conn.LocalAddr().(*net.UDPAddr)
-	if !ok || addr.IP == nil || addr.IP.IsLoopback() {
-		return "", fmt.Errorf("%w: this machine only has a loopback address — set one explicitly", ErrAdvertiseAddr)
-	}
-	return addr.IP.String(), nil
-}
-
 // joinEndpoint is the `host:2377` a worker joins a manager against.
 func joinEndpoint(manager Node) string {
 	return net.JoinHostPort(manager.SwarmAddr, strconv.Itoa(SwarmPort))

@@ -1,0 +1,9 @@
+.git
+.github
+.DS_Store
+bin
+dist
+stacker-ui/.nuxt
+stacker-ui/.output
+stacker-ui/node_modules
+stacker-server/internal/web/dist

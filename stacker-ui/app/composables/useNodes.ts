@@ -163,17 +163,15 @@ export function useNodes() {
   }
 
   /**
-   * Starts the configure run: checks the node, installs docker if it is
-   * missing, then initialises the swarm (local node) or joins it (any other).
+   * Starts the configure run for a remote node: checks it, installs docker if
+   * missing, then joins it to the installer-created swarm.
    *
    * It returns as soon as the run has started rather than when it finishes —
    * installing docker takes minutes — so the caller polls `provisionStatus`
    * for the checklist.
    */
-  const configureSwarm = (node: Node, advertiseAddr?: string) =>
-    api.post<ProvisionJob>(`/nodes/${node.id}/swarm/configure`, {
-      advertiseAddr: advertiseAddr?.trim() || ''
-    })
+  const configureSwarm = (node: Node) =>
+    api.post<ProvisionJob>(`/nodes/${node.id}/swarm/configure`, {})
 
   /** The latest configure run for a node, checklist and all. */
   const provisionStatus = (node: Node) =>

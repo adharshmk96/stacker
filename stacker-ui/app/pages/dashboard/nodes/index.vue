@@ -28,8 +28,7 @@ const pingInterval = 30_000
 /** True while the load-time swarm sweep is still running. */
 const syncing = ref(false)
 
-// Client-side only: the stacker server is a local daemon, so there is nothing
-// for the SSR pass to talk to.
+// Client-side only: the UI is generated as a static SPA.
 onMounted(async () => {
   await load()
 
@@ -326,8 +325,8 @@ async function runSwarm(node: Node, action: (node: Node) => Promise<{ message: s
   }
 }
 
-// The local node has no ssh connection to test or copy, and the server refuses
-// to delete it — so its only non-swarm action is the rename.
+// The local node has no ssh connection to test or copy. install.sh owns its
+// swarm setup, so the app only offers rename and state refresh.
 function rowActions(node: Node): DropdownMenuItem[][] {
   const swarm = swarmActions(node)
 
@@ -375,13 +374,12 @@ function rowActions(node: Node): DropdownMenuItem[][] {
 /** The swarm section of the row menu, which depends entirely on the current role. */
 function swarmActions(node: Node): DropdownMenuItem[] {
   if (node.swarmRole === 'none') {
+    if (node.local) return []
     return [
       {
-        label: node.local ? 'Enable swarm' : 'Configure',
+        label: 'Configure',
         icon: 'i-lucide-boxes',
-        // Nothing can join before a manager exists; the local node is the one
-        // that creates it.
-        disabled: !node.local && !hasManager.value,
+        disabled: !hasManager.value,
         onSelect: () => onConfigure(node)
       }
     ]
@@ -397,12 +395,15 @@ function swarmActions(node: Node): DropdownMenuItem[] {
     // a rebuilt host loses the docker stacker installed while the row goes on
     // claiming worker. Re-running the checklist puts it right, and every step
     // re-checks before it acts, so it is safe on a node that is simply fine.
-    {
+  ]
+
+  if (!node.local) {
+    actions.push({
       label: 'Reconfigure',
       icon: 'i-lucide-wrench',
       onSelect: () => onConfigure(node)
-    }
-  ]
+    })
+  }
 
   if (node.swarmRole === 'worker') {
     actions.unshift({
@@ -688,17 +689,26 @@ const formatDate = (value: string) =>
             />
 
             <UButton
-              v-else-if="row.original.swarmRole === 'none'"
-              :label="row.original.local ? 'Enable swarm' : 'Configure'"
+              v-else-if="row.original.swarmRole === 'none' && !row.original.local"
+              label="Configure"
               icon="i-lucide-boxes"
               size="xs"
               color="neutral"
               variant="subtle"
-              :disabled="!row.original.local && !hasManager"
-              :title="!row.original.local && !hasManager
-                ? 'Configure the local node first — a swarm needs a manager before anything can join'
+              :disabled="!hasManager"
+              :title="!hasManager
+                ? 'Rerun install.sh — a swarm manager is required before a node can join'
                 : undefined"
               @click="onConfigure(row.original)"
+            />
+
+            <UBadge
+              v-else-if="row.original.swarmRole === 'none'"
+              label="Installer required"
+              icon="i-lucide-triangle-alert"
+              color="warning"
+              variant="subtle"
+              title="Rerun install.sh to restore the local swarm manager"
             />
 
             <UBadge

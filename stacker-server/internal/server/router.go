@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -62,11 +61,9 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 		log.Error("could not register the local node", "error", err)
 	}
 
-	// The first node is the swarm manager, so the local node is swarm-enabled
-	// as soon as stacker starts. It runs in the background because reaching
-	// docker can take seconds, and it must never hold the server off its port
-	// — a failure only means the node shows "Configure" in the UI.
-	go nodeModule.Service.BootstrapSwarm(context.Background())
+	// install.sh owns swarm creation. The app only mirrors the manager state
+	// that already exists on the Docker host.
+	go nodeModule.Service.SyncLocalSwarm(cfg.AdvertiseAddr)
 
 	api := r.Group("/api")
 	// Auth mounts its own public/private split; everything else is signed-in only.

@@ -126,15 +126,6 @@ type InstallKeyRequest struct {
 	Password string `json:"password"`
 }
 
-// ConfigureRequest is the payload for POST /api/nodes/:id/swarm/configure.
-type ConfigureRequest struct {
-	// AdvertiseAddr overrides the address a manager advertises to the rest of
-	// the swarm. It is only read when the node is being initialised as the
-	// first manager, where a host with several interfaces would otherwise make
-	// docker refuse to guess. Ignored for workers.
-	AdvertiseAddr string `json:"advertiseAddr"`
-}
-
 // SwarmResult is what every swarm mutation answers with: the node as it now
 // stands, plus a line describing what happened.
 type SwarmResult struct {

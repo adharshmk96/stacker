@@ -8,80 +8,6 @@ import (
 	"time"
 )
 
-// Configure brings a node into the swarm.
-//
-// The local node is the bootstrap manager: configuring it runs `docker swarm
-// init`, which is what makes the very first node a manager. Every other node
-// joins that manager as a worker and can be promoted afterwards.
-//
-// It is safe to call on a node that is already configured — the state is read
-// from docker first, so a node that joined out of band is simply recorded.
-func (s *Service) Configure(ctx context.Context, id string, req ConfigureRequest) (SwarmResult, error) {
-	item, err := s.repo.Get(id)
-	if err != nil {
-		return SwarmResult{}, err
-	}
-
-	unlock, err := s.lock(id)
-	if err != nil {
-		return SwarmResult{}, err
-	}
-	defer unlock()
-
-	if item.Local {
-		return s.initManager(ctx, item, req.AdvertiseAddr)
-	}
-	return s.joinWorker(ctx, item)
-}
-
-// initManager makes the node the first manager of the swarm. Only the local
-// node takes this path: it is the one machine stacker can always reach, so
-// bootstrapping the control plane anywhere else would risk a swarm stacker
-// cannot administer.
-func (s *Service) initManager(ctx context.Context, item Node, override string) (SwarmResult, error) {
-	state, err := s.rt.state(ctx, item)
-	if err != nil {
-		return SwarmResult{}, s.recordSwarmFailure(item, err)
-	}
-
-	// Already in a swarm: record what is actually there rather than trying to
-	// init on top of it, which docker would refuse anyway.
-	if state.Active() {
-		item, err = s.applyState(item, state, item.SwarmAddr)
-		if err != nil {
-			return SwarmResult{}, err
-		}
-		if state.Role() == SwarmRoleWorker {
-			return SwarmResult{Node: item}, ErrAlreadyInSwarm
-		}
-		return SwarmResult{Node: item, Message: "This node is already a swarm manager"}, nil
-	}
-
-	addr, err := advertiseAddr(item, override)
-	if err != nil {
-		return SwarmResult{}, s.recordSwarmFailure(item, err)
-	}
-
-	if _, err := s.rt.docker(ctx, item, "swarm", "init", "--advertise-addr", addr); err != nil {
-		return SwarmResult{}, s.recordSwarmFailure(item, err)
-	}
-
-	// Re-read rather than assume: the node id only exists after init, and it is
-	// what promote, demote and remove are addressed by.
-	state, err = s.rt.state(ctx, item)
-	if err != nil {
-		return SwarmResult{}, s.recordSwarmFailure(item, err)
-	}
-
-	item, err = s.applyState(item, state, addr)
-	if err != nil {
-		return SwarmResult{}, err
-	}
-
-	s.log.Info("swarm initialised", "node", item.Name, "addr", addr)
-	return SwarmResult{Node: item, Message: fmt.Sprintf("Swarm initialised — this node is the manager, advertising %s", addr)}, nil
-}
-
 // joinWorker joins a remote node to the existing manager as a worker.
 func (s *Service) joinWorker(ctx context.Context, item Node) (SwarmResult, error) {
 	// A node stacker cannot log into cannot be configured, and the ssh failure
@@ -164,29 +90,31 @@ func (s *Service) joinWorker(ctx context.Context, item Node) (SwarmResult, error
 	return SwarmResult{Node: item, Message: fmt.Sprintf("Joined the swarm as a worker via %s", manager.Name)}, nil
 }
 
-// BootstrapSwarm makes the local node a manager on start, so the first node
-// stacker knows about is swarm-enabled without anyone asking for it.
-//
-// It is deliberately quiet and never fatal: docker may not be installed, may
-// not be running yet, or the machine may have no usable address. Any of those
-// leaves the node showing "Configure" in the UI, which is the manual path.
-func (s *Service) BootstrapSwarm(ctx context.Context) {
+// SyncLocalSwarm mirrors the swarm manager prepared by install.sh. It never
+// mutates Docker; infrastructure setup is deliberately outside the app.
+func (s *Service) SyncLocalSwarm(advertiseAddr string) {
+	ctx, cancel := context.WithTimeout(context.Background(), swarmCommandTimeout)
+	defer cancel()
+
 	item, err := s.repo.Get(LocalID)
 	if err != nil {
-		s.log.Warn("no local node to enable the swarm on", "error", err)
+		s.log.Warn("could not find the installed node", "error", err)
 		return
 	}
-	// Already a manager as far as we know — a refresh will catch any drift.
-	if item.SwarmRole == SwarmRoleManager {
-		return
-	}
-
-	result, err := s.Configure(ctx, LocalID, ConfigureRequest{})
+	state, err := s.rt.state(ctx, item)
 	if err != nil {
-		s.log.Info("the local node is not swarm-enabled yet", "reason", err)
+		s.recordSwarmFailure(item, err) //nolint:errcheck // best-effort startup sync
+		s.log.Warn("could not read the installed swarm manager", "error", err)
 		return
 	}
-	s.log.Info("local node swarm ready", "detail", result.Message)
+	item, err = s.applyState(item, state, advertiseAddr)
+	if err != nil {
+		s.log.Warn("could not record the installed swarm manager", "error", err)
+		return
+	}
+	if item.SwarmRole != SwarmRoleManager {
+		s.log.Error("the installed node is not a swarm manager; rerun install.sh")
+	}
 }
 
 // Promote turns a worker into a manager. Docker is told from an existing
@@ -510,22 +438,14 @@ func (s *Service) recordSwarmFailure(item Node, cause error) error {
 	return cause
 }
 
-// managerEndpoint is the `host:2377` workers join against, filling in a missing
-// advertise address for swarms initialised before stacker knew about them.
+// managerEndpoint is the `host:2377` workers join against. install.sh always
+// provides this address; a missing value means the install must be reconciled.
 func (s *Service) managerEndpoint(manager Node) (string, error) {
 	if manager.SwarmAddr != "" {
 		return joinEndpoint(manager), nil
 	}
 
-	addr, err := advertiseAddr(manager, "")
-	if err != nil {
-		return "", err
-	}
-	manager.SwarmAddr = addr
-	if err := s.repo.Save(&manager); err != nil {
-		return "", err
-	}
-	return joinEndpoint(manager), nil
+	return "", ErrAdvertiseAddr
 }
 
 // controlNode picks a manager that can run `docker node` commands for the given

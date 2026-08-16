@@ -2,8 +2,8 @@
 import type { Node, ProvisionJob, StepState } from '~/types/node'
 
 /**
- * Configures a node in one click: check the host, install docker if it is
- * missing, then initialise the swarm (local node) or join it (any other).
+ * Configures a remote node in one click: check the host, install docker if it
+ * is missing, then join it to the installer-created swarm.
  *
  * Opening it starts the run — that is the single click the feature is built
  * around — unless one is already going, in which case it attaches to it. The
@@ -20,8 +20,6 @@ const open = defineModel<boolean>('open', { default: false })
 const { configureSwarm, provisionStatus, load } = useNodes()
 const toast = useToast()
 
-const isInit = computed(() => !!props.node?.local)
-
 /**
  * A node that already holds a role is being *re*-configured, which is a
  * different thing to explain: the run is a repair, and on a healthy host it
@@ -31,10 +29,9 @@ const isRerun = computed(() => !!props.node && props.node.swarmRole !== 'none')
 
 const title = computed(() => {
   if (isRerun.value) return 'Reconfigure node'
-  return isInit.value ? 'Enable swarm' : 'Configure node'
+  return 'Configure node'
 })
 
-const advertiseAddr = ref('')
 const job = ref<ProvisionJob | null>(null)
 const starting = ref(false)
 const running = computed(() => job.value?.state === 'running')
@@ -54,7 +51,6 @@ watch(open, async (value) => {
     return
   }
 
-  advertiseAddr.value = ''
   job.value = null
   if (!props.node) return
 
@@ -133,7 +129,7 @@ async function onStart() {
   starting.value = true
 
   try {
-    job.value = await configureSwarm(props.node, advertiseAddr.value)
+    job.value = await configureSwarm(props.node)
     poll()
   } catch (error) {
     toast.add({
@@ -161,7 +157,7 @@ const actionLabel = computed(() => {
   if (running.value) return 'Configuring…'
   if (job.value?.state === 'failed') return 'Try again'
   if (isRerun.value) return 'Reconfigure'
-  return isInit.value ? 'Enable swarm' : 'Configure node'
+  return 'Configure node'
 })
 </script>
 
@@ -173,10 +169,6 @@ const actionLabel = computed(() => {
           <strong class="text-highlighted">{{ node?.name }}</strong> is already a
           {{ node?.swarmRole }}, so this re-runs the same checks: anything still in place is
           skipped, and anything missing — docker, the daemon, swarm membership — is put back.
-        </p>
-        <p v-else-if="isInit" class="text-sm text-muted">
-          <strong class="text-highlighted">{{ node?.name }}</strong> will be checked, given docker
-          if it is missing, and made the swarm manager. Every node configured afterwards joins it.
         </p>
         <p v-else class="text-sm text-muted">
           <strong class="text-highlighted">{{ node?.name }}</strong> will be checked over SSH, given
@@ -194,23 +186,13 @@ const actionLabel = computed(() => {
         </div>
 
         <UAlert
-          v-if="!isInit && node?.keyStatus !== 'ok'"
+          v-if="node?.keyStatus !== 'ok'"
           title="Connection not verified"
           description="Stacker has not confirmed key authentication for this node. Test the connection first."
           icon="i-lucide-triangle-alert"
           color="warning"
           variant="subtle"
         />
-
-        <!-- Only meaningful while creating the swarm: a manager that already
-             exists keeps the address it advertised at init. -->
-        <UFormField
-          v-if="isInit && !isRerun && job?.state !== 'running' && job?.state !== 'succeeded'"
-          label="Advertise address"
-          description="The address other nodes reach this machine on. Leave blank to detect it — set it when this host has more than one network interface."
-        >
-          <UInput v-model="advertiseAddr" placeholder="e.g. 10.0.0.4" class="w-full font-mono" />
-        </UFormField>
 
         <!-- The checklist, live while the run is going. -->
         <ul v-if="job" class="space-y-2 rounded-md border border-default p-3">

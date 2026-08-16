@@ -128,22 +128,12 @@ func (h *Handler) installKey(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
-// configure runs the whole provisioning checklist — checks, docker install,
-// then init or join. Installing docker takes minutes, so the run happens in the
+// configure runs the remote-node checklist and joins it to the swarm.
+// Installing docker takes minutes, so the run happens in the
 // background and this answers 202 with the checklist as it stands; the client
 // polls provisionStatus for the rest.
 func (h *Handler) configure(c *gin.Context) {
-	var req ConfigureRequest
-	// The body is optional — the advertise address is the only field, and it is
-	// only ever set by a user overriding the detected one.
-	if c.Request.ContentLength > 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-	}
-
-	job, err := h.service.Provision(c.Param("id"), req)
+	job, err := h.service.Provision(c.Param("id"))
 	if err != nil {
 		respondError(c, err)
 		return
@@ -201,7 +191,7 @@ func respondError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrSwarmBusy):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrLocalNode):
+	case errors.Is(err, ErrLocalNode), errors.Is(err, ErrLocalSetupManaged):
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrInvalidSsh), errors.Is(err, ErrSshKeyMissing),
 		errors.Is(err, ErrNotWorker), errors.Is(err, ErrNotManagerRole),
