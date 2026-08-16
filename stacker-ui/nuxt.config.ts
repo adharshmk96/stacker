@@ -19,7 +19,10 @@ export default defineNuxtConfig({
   nitro: {
     devProxy: {
       '/api': {
-        target: 'http://localhost:8080/api',
+        // STACKER_API_URL points the dev server at a stacker on another port,
+        // for running against a throwaway instance without touching the one on
+        // the default port.
+        target: `${process.env.STACKER_API_URL ?? 'http://localhost:8080'}/api`,
         changeOrigin: true
       }
     }

@@ -4,6 +4,31 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 defineProps<{ collapsed?: boolean }>()
 
 const colorMode = useColorMode()
+const { user, logout } = useAuth()
+const toast = useToast()
+
+const signingOut = ref(false)
+
+async function signOut() {
+  if (signingOut.value) return
+  signingOut.value = true
+
+  try {
+    // logout() clears local state even if the revoke call fails, so the
+    // redirect below is always the right next step.
+    await logout()
+    await navigateTo('/login')
+  } catch (error) {
+    toast.add({
+      title: 'Could not sign out',
+      description: error instanceof Error ? error.message : undefined,
+      icon: 'i-lucide-circle-alert',
+      color: 'error'
+    })
+  } finally {
+    signingOut.value = false
+  }
+}
 
 const modes = [
   { value: 'light', label: 'Light', icon: 'i-lucide-sun' },
@@ -16,7 +41,7 @@ const modes = [
 const items = computed<DropdownMenuItem[][]>(() => [
   [
     {
-      label: 'adharsh',
+      label: user.value?.username ?? 'Account',
       avatar: { icon: 'i-lucide-circle-user' },
       type: 'label'
     }
@@ -40,7 +65,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
     { label: 'Settings', icon: 'i-lucide-settings', to: '/dashboard/settings/account' }
   ],
   [
-    { label: 'Sign out', icon: 'i-lucide-log-out', disabled: true }
+    { label: 'Sign out', icon: 'i-lucide-log-out', onSelect: signOut }
   ]
 ])
 </script>
@@ -55,7 +80,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
       icon="i-lucide-circle-user"
       color="neutral"
       variant="ghost"
-      :label="collapsed ? undefined : 'Account'"
+      :label="collapsed ? undefined : (user?.name ?? 'Account')"
       :trailing-icon="collapsed ? undefined : 'i-lucide-chevrons-up-down'"
       class="w-full"
       :class="collapsed ? undefined : 'justify-start'"

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"stacker/internal/config"
+	"stacker/internal/database"
+	"stacker/internal/modules/auth"
 	"stacker/internal/modules/node"
 	"stacker/internal/modules/sshkey"
 	"stacker/internal/modules/swarm"
@@ -17,7 +19,7 @@ import (
 )
 
 // newRouter builds the gin engine and mounts every module under /api.
-func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) *gin.Engine {
+func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, error) {
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -33,6 +35,21 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) *gin.Engine {
 	// one place: ssh keys first, then nodes which consume the key service.
 	keyModule := sshkey.New(db, cfg.KeyDir, log)
 	nodeModule := node.New(db, keyModule.Service, log)
+
+	// Auth guards every other module, so it is built first — and it is handed
+	// the data wipe rather than importing it, since erasing nodes is the node
+	// module's business, not auth's. The closure runs long after startup.
+	authModule, err := auth.New(db, func() error {
+		if err := database.Reset(db, log); err != nil {
+			return err
+		}
+		// The local node is seeded at boot; the wipe took it with it.
+		_, err := nodeModule.Service.EnsureLocal()
+		return err
+	}, log)
+	if err != nil {
+		return nil, err
+	}
 	// Swarm browses docker through the nodes it is given, so it is built last.
 	swarmModule := swarm.New(nodeModule.Service, log)
 
@@ -50,16 +67,21 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) *gin.Engine {
 	go nodeModule.Service.BootstrapSwarm(context.Background())
 
 	api := r.Group("/api")
-	keyModule.RegisterRoutes(api)
-	nodeModule.RegisterRoutes(api)
-	swarmModule.RegisterRoutes(api)
+	// Auth mounts its own public/private split; everything else is signed-in only.
+	authModule.RegisterRoutes(api)
+
+	protected := api.Group("")
+	protected.Use(authModule.RequireAuth())
+	keyModule.RegisterRoutes(protected)
+	nodeModule.RegisterRoutes(protected)
+	swarmModule.RegisterRoutes(protected)
 
 	// The embedded UI is the fallback, so it must be mounted after the API.
 	if err := web.Register(r); err != nil {
 		log.Error("could not mount the embedded UI", "error", err)
 	}
 
-	return r
+	return r, nil
 }
 
 // requestLogger logs one line per request, including any error the handler

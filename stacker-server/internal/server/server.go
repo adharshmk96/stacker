@@ -29,9 +29,14 @@ func Run(cfg config.Config) error {
 		return err
 	}
 
+	handler, err := newRouter(cfg, db, log)
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           newRouter(cfg, db, log),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
