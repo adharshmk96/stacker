@@ -28,6 +28,16 @@ Persistent state lives in the `stacker-data`, `stacker-traefik-config`, and
 `stacker-traefik-data` Docker volumes. The Traefik volume contains
 `/etc/traefik/traefik.yml` and `/etc/traefik/dynamic/stacker.yml`.
 
+## Uninstall
+
+Remove Stacker, Traefik, the local image, and all persistent Stacker data:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/adharshmk96/stacker/main/uninstall.sh | sudo bash
+```
+
+Docker and Docker Swarm are preserved because other applications may use them.
+
 ## Local Docker development
 
 ```sh
