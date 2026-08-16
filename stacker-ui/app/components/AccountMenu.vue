@@ -37,7 +37,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
         onSelect: (event: Event) => event.preventDefault()
       }))
     },
-    { label: 'Settings', icon: 'i-lucide-settings', disabled: true }
+    { label: 'Settings', icon: 'i-lucide-settings', to: '/dashboard/settings/account' }
   ],
   [
     { label: 'Sign out', icon: 'i-lucide-log-out', disabled: true }

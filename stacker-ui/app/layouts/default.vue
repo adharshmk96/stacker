@@ -35,8 +35,13 @@ const links = computed<NavigationMenuItem[][]>(() => [
     { label: 'SSH Keys', icon: 'i-lucide-key-round', to: '/dashboard/ssh-keys' }
   ],
   [
-    // No `to` until the routes exist — a disabled item still resolves its link.
-    { label: 'Stacks', icon: 'i-lucide-layers', disabled: true }
+    {
+      label: 'Settings',
+      icon: 'i-lucide-settings',
+      // Every settings tab is its own route, so keep the entry lit across all.
+      to: '/dashboard/settings/account',
+      active: route.path.startsWith('/dashboard/settings')
+    }
   ]
 ])
 </script>

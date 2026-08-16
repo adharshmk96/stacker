@@ -3,10 +3,9 @@
   "configurations": [
     {
       "name": "stacker-ui",
-      "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "--cwd", "stacker-ui", "dev"],
-      "port": 3000,
-      "autoPort": true
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "stacker-ui", "run", "dev"],
+      "port": 3000
     }
   ]
 }
