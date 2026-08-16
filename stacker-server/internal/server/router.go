@@ -9,6 +9,7 @@ import (
 	"stacker/internal/config"
 	"stacker/internal/database"
 	"stacker/internal/modules/auth"
+	githubprovider "stacker/internal/modules/github"
 	"stacker/internal/modules/node"
 	"stacker/internal/modules/sshkey"
 	"stacker/internal/modules/swarm"
@@ -52,6 +53,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	}
 	// Swarm browses docker through the nodes it is given, so it is built last.
 	swarmModule := swarm.New(nodeModule.Service, log)
+	githubModule := githubprovider.New(db, log)
 
 	// The machine stacker is installed on is a node like any other, so it is
 	// seeded on every start. A failure here is not fatal — the rest of the API
@@ -69,12 +71,14 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	api := r.Group("/api")
 	// Auth mounts its own public/private split; everything else is signed-in only.
 	authModule.RegisterRoutes(api)
+	githubModule.RegisterPublicRoutes(api)
 
 	protected := api.Group("")
 	protected.Use(authModule.RequireAuth())
 	keyModule.RegisterRoutes(protected)
 	nodeModule.RegisterRoutes(protected)
 	swarmModule.RegisterRoutes(protected)
+	githubModule.RegisterRoutes(protected)
 
 	// The embedded UI is the fallback, so it must be mounted after the API.
 	if err := web.Register(r); err != nil {

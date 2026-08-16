@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"stacker/internal/modules/auth"
+	githubprovider "stacker/internal/modules/github"
 	"stacker/internal/modules/node"
 	"stacker/internal/modules/sshkey"
 
@@ -19,6 +20,7 @@ func models() []any {
 		&auth.Session{},
 		&auth.PasswordReset{},
 		&auth.Secret{},
+		&githubprovider.App{},
 		&sshkey.SshKey{},
 		&node.Node{},
 	}
