@@ -45,6 +45,8 @@ func (s swarmState) Role() SwarmRole {
 // so local and remote nodes are driven by exactly the same code.
 type runner struct {
 	keys keys
+	// exec, if set, replaces os/exec. Tests assign it.
+	exec func(ctx context.Context, item Node, timeout time.Duration, argv []string, stdin string) (string, error)
 }
 
 // run executes argv on the node under the default timeout.
@@ -68,6 +70,11 @@ func (r runner) shell(ctx context.Context, item Node, timeout time.Duration, scr
 func (r runner) runFor(ctx context.Context, item Node, timeout time.Duration, argv ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	if r.exec != nil {
+		out, err := r.exec(ctx, item, timeout, argv, "")
+		return finishRun(ctx, out, err)
+	}
 
 	var cmd *exec.Cmd
 	if item.Local {
@@ -94,16 +101,7 @@ func (r runner) runFor(ctx context.Context, item Node, timeout time.Duration, ar
 	}
 
 	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
-	if err != nil {
-		if ctx.Err() != nil {
-			return text, fmt.Errorf("%w: %s", ErrSwarmUnreachable, "the command timed out")
-		}
-		// Wrapped so the handler can tell a command that ran and failed from a
-		// bug, and answer with docker's own words instead of a bare 500.
-		return text, fmt.Errorf("%w: %s", ErrSwarmCommand, firstLine(text, err))
-	}
-	return text, nil
+	return finishRun(ctx, string(out), err)
 }
 
 // docker runs a docker subcommand on the node, translating "docker is not
@@ -152,6 +150,11 @@ func (r runner) dockerInput(ctx context.Context, item Node, stdin string, args .
 
 	argv := append([]string{"docker"}, args...)
 
+	if r.exec != nil {
+		out, err := r.exec(ctx, item, swarmCommandTimeout, argv, stdin)
+		return finishRun(ctx, out, err)
+	}
+
 	var cmd *exec.Cmd
 	if item.Local {
 		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -174,7 +177,14 @@ func (r runner) dockerInput(ctx context.Context, item Node, stdin string, args .
 	cmd.Stdin = strings.NewReader(stdin)
 
 	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
+	return finishRun(ctx, string(out), err)
+}
+
+// finishRun turns combined output into the same success / timeout / command
+// error the real os/exec path uses, so tests that stub exec still exercise
+// docker()'s classification of that error.
+func finishRun(ctx context.Context, out string, err error) (string, error) {
+	text := strings.TrimSpace(out)
 	if err != nil {
 		if ctx.Err() != nil {
 			return text, fmt.Errorf("%w: %s", ErrSwarmUnreachable, "the command timed out")

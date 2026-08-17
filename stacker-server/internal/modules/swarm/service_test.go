@@ -45,8 +45,20 @@ func (f *fakeNodes) Docker(_ context.Context, item node.Node, args ...string) (s
 }
 
 func (f *fakeNodes) DockerInput(_ context.Context, item node.Node, stdin string, args ...string) (string, error) {
-	f.calls = append(f.calls, item.Name+" "+strings.Join(args, " ")+" <<"+stdin)
-	return "", nil
+	cmd := item.Name + " " + strings.Join(args, " ")
+	key := cmd + " <<" + stdin
+	f.calls = append(f.calls, key)
+
+	if err, ok := f.fails[key]; ok {
+		return "", err
+	}
+	if err, ok := f.fails[cmd]; ok {
+		return "", err
+	}
+	if out, ok := f.replies[key]; ok {
+		return out, nil
+	}
+	return f.replies[cmd], nil
 }
 
 func newService(nodes *fakeNodes) *Service {
@@ -361,6 +373,161 @@ func TestCreateChecksItsRequiredFields(t *testing.T) {
 	if _, err := service.Create(context.Background(), Stacks, CreateRequest{Content: "services: {}"}); !errors.Is(err, ErrNameRequired) {
 		t.Errorf("err = %v, want ErrNameRequired", err)
 	}
+	if _, err := service.Create(context.Background(), Stacks, CreateRequest{Name: "app"}); !errors.Is(err, ErrContentRequired) {
+		t.Errorf("err = %v, want ErrContentRequired", err)
+	}
+}
+
+func TestCreateSucceedsForEachResource(t *testing.T) {
+	two := 2
+	compose := "services:\n  web:\n    image: nginx\n"
+	tests := []struct {
+		resource Resource
+		req      CreateRequest
+		message  string
+		call     string
+	}{
+		{
+			resource: Stacks,
+			req:      CreateRequest{Name: "app", Content: compose},
+			message:  "Deployed the stack app",
+			call:     "local stack deploy --compose-file - --detach=true app <<" + compose,
+		},
+		{
+			resource: Services,
+			req:      CreateRequest{Name: "web", Image: "nginx"},
+			message:  "Created the service web",
+			call:     "local service create --detach=true --name web nginx",
+		},
+		{
+			resource: Services,
+			req:      CreateRequest{Name: "api", Image: "redis", Replicas: &two},
+			message:  "Created the service api",
+			call:     "local service create --detach=true --name api --replicas 2 redis",
+		},
+		{
+			resource: Networks,
+			req:      CreateRequest{Name: "front"},
+			message:  "Created the overlay network front",
+			call:     "local network create --driver overlay --attachable front",
+		},
+		{
+			resource: Networks,
+			req:      CreateRequest{Name: "hostnet", Driver: "bridge"},
+			message:  "Created the bridge network hostnet",
+			call:     "local network create --driver bridge --attachable hostnet",
+		},
+		{
+			resource: Volumes,
+			req:      CreateRequest{Name: "data", Node: "edge-01"},
+			message:  "Created the volume data on edge-01",
+			call:     "edge-01 volume create data",
+		},
+		{
+			resource: Volumes,
+			req:      CreateRequest{Name: "nfs-data", Node: "edge-01", Driver: "local"},
+			message:  "Created the volume nfs-data on edge-01",
+			call:     "edge-01 volume create --driver local nfs-data",
+		},
+		{
+			resource: Images,
+			req:      CreateRequest{Image: "nginx:alpine", Node: "edge-01"},
+			message:  "Pulled nginx:alpine onto edge-01",
+			call:     "edge-01 image pull nginx:alpine",
+		},
+		{
+			resource: Configs,
+			req:      CreateRequest{Name: "nginx.conf", Content: "worker_processes 1;"},
+			message:  "Created the config nginx.conf",
+			call:     "local config create nginx.conf - <<worker_processes 1;",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.message, func(t *testing.T) {
+			nodes := &fakeNodes{roster: []node.Node{manager("local"), worker("edge-01")}}
+			result, err := newService(nodes).Create(context.Background(), tt.resource, tt.req)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if result.Message != tt.message {
+				t.Errorf("message = %q, want %q", result.Message, tt.message)
+			}
+			if len(nodes.calls) != 1 || nodes.calls[0] != tt.call {
+				t.Errorf("ran %v, want %q", nodes.calls, tt.call)
+			}
+		})
+	}
+}
+
+func TestCreateReportsADockerInputFailure(t *testing.T) {
+	nodes := &fakeNodes{
+		roster: []node.Node{manager("local")},
+		fails: map[string]error{
+			"local stack deploy --compose-file - --detach=true app": fmt.Errorf("%w: %s", node.ErrSwarmCommand, "compose invalid"),
+		},
+	}
+
+	_, err := newService(nodes).Create(context.Background(), Stacks,
+		CreateRequest{Name: "app", Content: "services: {}"})
+	if !errors.Is(err, node.ErrSwarmCommand) {
+		t.Fatalf("err = %v, want ErrSwarmCommand", err)
+	}
+}
+
+func TestCreateRefusesResourcesWithNoCreatePath(t *testing.T) {
+	_, err := newService(&fakeNodes{roster: []node.Node{manager("local")}}).
+		Create(context.Background(), Tasks, CreateRequest{Name: "t1"})
+	if !errors.Is(err, ErrUnknownAction) {
+		t.Fatalf("err = %v, want ErrUnknownAction", err)
+	}
+}
+
+func TestListManagerFailureIsAnErrorRow(t *testing.T) {
+	nodes := &fakeNodes{
+		roster: []node.Node{manager("local")},
+		fails: map[string]error{
+			"local service ls --format {{json .}}": fmt.Errorf("%w: %s", node.ErrSwarmCommand, "daemon down"),
+		},
+	}
+
+	result, err := newService(nodes).List(context.Background(), Services, "")
+	if err != nil {
+		t.Fatalf("List: %v, want the page still to load", err)
+	}
+	if len(result.Rows) != 0 {
+		t.Errorf("rows = %+v, want none", result.Rows)
+	}
+	if len(result.Errors) != 1 || result.Errors[0].Node != "local" {
+		t.Fatalf("errors = %+v, want one for local", result.Errors)
+	}
+	if result.Errors[0].Message != "daemon down" {
+		t.Errorf("message = %q, want docker's own line", result.Errors[0].Message)
+	}
+}
+
+func TestListUnknownNode(t *testing.T) {
+	_, err := newService(&fakeNodes{roster: []node.Node{manager("local")}}).
+		List(context.Background(), Containers, "missing")
+	if !errors.Is(err, ErrUnknownNode) {
+		t.Fatalf("err = %v, want ErrUnknownNode", err)
+	}
+}
+
+func TestInspectEmptyOutput(t *testing.T) {
+	nodes := &fakeNodes{roster: []node.Node{manager("local")}}
+
+	result, err := newService(nodes).Action(context.Background(), Services,
+		ActionRequest{Action: "inspect", ID: "web"})
+	if err != nil {
+		t.Fatalf("Action: %v", err)
+	}
+	if result.Output != "(no output)" {
+		t.Errorf("output = %q, want (no output)", result.Output)
+	}
+	if want := "local service inspect --pretty web"; nodes.calls[0] != want {
+		t.Errorf("ran %q, want %q", nodes.calls[0], want)
+	}
 }
 
 func TestUnknownResourceIsRefused(t *testing.T) {
@@ -404,5 +571,70 @@ func TestImageListDropsDanglingLayers(t *testing.T) {
 	rows := parseLines(out, specs[Images])
 	if len(rows) != 1 || rows[0]["repository"] != "nginx" {
 		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestParseRemainingResourceJSON(t *testing.T) {
+	tests := []struct {
+		resource Resource
+		out      string
+		want     Row
+	}{
+		{
+			resource: Networks,
+			out:      `{"ID":"n1","Name":"front","Driver":"overlay","Scope":"swarm","CreatedAt":"2026-08-14 12:00:00 +0000 UTC"}`,
+			want:     Row{"id": "n1", "name": "front", "driver": "overlay", "scope": "swarm", "createdAt": "2026-08-14T12:00:00Z"},
+		},
+		{
+			resource: Secrets,
+			out:      `{"ID":"s1","Name":"db_password","CreatedAt":"2 hours ago","UpdatedAt":"1 hour ago"}`,
+			want:     Row{"id": "s1", "name": "db_password", "createdAt": "2 hours ago", "updatedAt": "1 hour ago"},
+		},
+		{
+			resource: Configs,
+			out:      `{"ID":"c1","Name":"nginx.conf","CreatedAt":"2 hours ago","UpdatedAt":"2 hours ago"}`,
+			want:     Row{"id": "c1", "name": "nginx.conf", "createdAt": "2 hours ago", "updatedAt": "2 hours ago"},
+		},
+		{
+			resource: Volumes,
+			out:      `{"Name":"data","Driver":"local","Mountpoint":"/var/lib/docker/volumes/data","Scope":"local"}`,
+			want:     Row{"name": "data", "driver": "local", "mountpoint": "/var/lib/docker/volumes/data", "scope": "local"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.resource), func(t *testing.T) {
+			rows := parseLines(tt.out, specs[tt.resource])
+			if len(rows) != 1 {
+				t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+			}
+			for key, want := range tt.want {
+				if rows[0][key] != want {
+					t.Errorf("%s = %q, want %q", key, rows[0][key], want)
+				}
+			}
+		})
+	}
+
+	// A line that starts like JSON but is not must not fail the list.
+	if rows := parseLines("{not json}", specs[Networks]); len(rows) != 0 {
+		t.Errorf("invalid JSON produced rows: %+v", rows)
+	}
+
+	// Docker sometimes emits numbers; they still have to become a cell.
+	rows := parseLines(`{"Name":"app","Services":4,"Orchestrator":""}`, specs[Stacks])
+	if len(rows) != 1 || rows[0]["services"] != "4" || rows[0]["orchestrator"] != "—" {
+		t.Fatalf("numeric/empty fields = %+v", rows)
+	}
+
+	rec := record{"Nil": nil}
+	if rec.get("Nil") != "" || rec.get("missing") != "" {
+		t.Errorf("get must treat missing and nil as empty")
+	}
+
+	// CurrentState with no extra words still lowercases to a state.
+	row := taskRow(record{"CurrentState": "Ready", "DesiredState": "Ready", "Error": ""})
+	if row["state"] != "ready" {
+		t.Errorf("state = %q, want ready", row["state"])
 	}
 }

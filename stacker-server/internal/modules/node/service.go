@@ -17,6 +17,27 @@ const (
 	sshCommandTimeout = 30 * time.Second
 )
 
+// lookPath and sshProbe are the production binaries; tests assign stubs so they
+// never hang on a real ssh timeout.
+var lookPath = exec.LookPath
+
+var sshProbe = defaultSshProbe
+
+func defaultSshProbe(ctx context.Context, keyPath, target string, port int, connectTimeout time.Duration) (string, error) {
+	args := []string{
+		"-i", keyPath,
+		"-p", strconv.Itoa(port),
+		"-o", "BatchMode=yes",
+		"-o", "IdentitiesOnly=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", fmt.Sprintf("ConnectTimeout=%d", int(connectTimeout.Seconds())),
+		target,
+		"true",
+	}
+	out, err := exec.CommandContext(ctx, "ssh", args...).CombinedOutput()
+	return string(out), err
+}
+
 // keys is the slice of the ssh key module this one depends on: resolving a key
 // id to the private key file ssh should use. Declared here, on the consumer
 // side, so the dependency stays one-way and explicit.
@@ -321,10 +342,10 @@ func (s *Service) InstallKey(ctx context.Context, req InstallKeyRequest) (KeyChe
 	}
 
 	// ssh-copy-id prompts on a tty, so sshpass feeds it the password instead.
-	if _, err := exec.LookPath("sshpass"); err != nil {
+	if _, err := lookPath("sshpass"); err != nil {
 		return KeyCheckResult{}, ErrCopyIDMissing
 	}
-	if _, err := exec.LookPath("ssh-copy-id"); err != nil {
+	if _, err := lookPath("ssh-copy-id"); err != nil {
 		return KeyCheckResult{}, ErrCopyIDMissing
 	}
 
@@ -370,20 +391,9 @@ func probeWith(ctx context.Context, keyPath, target string, port int, connectTim
 	ctx, cancel := context.WithTimeout(ctx, sshCommandTimeout)
 	defer cancel()
 
-	args := []string{
-		"-i", keyPath,
-		"-p", strconv.Itoa(port),
-		"-o", "BatchMode=yes",
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
-		"-o", fmt.Sprintf("ConnectTimeout=%d", int(connectTimeout.Seconds())),
-		target,
-		"true",
-	}
-
-	out, err := exec.CommandContext(ctx, "ssh", args...).CombinedOutput()
+	out, err := sshProbe(ctx, keyPath, target, port, connectTimeout)
 	if err != nil {
-		return KeyCheckResult{OK: false, Message: firstLine(string(out), err)}
+		return KeyCheckResult{OK: false, Message: firstLine(out, err)}
 	}
 	return KeyCheckResult{OK: true, Message: "Key authentication works"}
 }

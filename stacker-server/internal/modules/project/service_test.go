@@ -199,6 +199,20 @@ func TestCreateRejectsBadInput(t *testing.T) {
 			r.SourceKind = SourceGit
 			r.Git = GitSource{Branch: "main", ComposePath: "docker-compose.yml"}
 		}, ErrRepoRequired},
+		"git with no branch": {func(r *WriteRequest) {
+			r.SourceKind = SourceGit
+			r.Git = GitSource{Repo: "acme/store", ComposePath: "docker-compose.yml"}
+		}, ErrBranchRequired},
+		"git with no compose path": {func(r *WriteRequest) {
+			r.SourceKind = SourceGit
+			r.Git = GitSource{Repo: "acme/store", Branch: "main"}
+		}, ErrComposePath},
+		"no environments": {func(r *WriteRequest) {
+			r.Environments = nil
+		}, ErrEnvRequired},
+		"domain port too high": {func(r *WriteRequest) {
+			r.Environments[0].Domains[0].Port = 70000
+		}, ErrDomainPort},
 		"host with a scheme": {func(r *WriteRequest) {
 			r.Environments[0].Domains[0].Host = "https://shop.acme.dev"
 		}, ErrDomainHost},
@@ -1123,4 +1137,548 @@ func contains(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func TestListRedactsSecrets(t *testing.T) {
+	service, _ := testService(t, Options{})
+
+	req := writeRequest()
+	req.Environments[0].Secrets = []EnvVar{{Key: "SESSION_SECRET", Value: "s3cret"}}
+	if _, err := service.Create(req); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	items, err := service.List()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("list = %d, want 1", len(items))
+	}
+	if got := items[0].Environments[0].Secrets[0].Value; got != "" {
+		t.Errorf("listed secret = %q, want it blank", got)
+	}
+}
+
+func TestStatusAllReportsEveryProject(t *testing.T) {
+	service, rec := testService(t, Options{})
+	rec.reply = func(Command) ([]string, error) {
+		return []string{`{"Name":"x_web","Replicas":"1/1"}`, `{not json`, `{"Name":"x_api","Replicas":"n/a"}`}, nil
+	}
+
+	first, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	secondReq := writeRequest()
+	secondReq.Name = "other"
+	secondReq.Environments[0].Domains[0].Host = "other.acme.dev"
+	second, err := service.Create(secondReq)
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+
+	statuses, err := service.StatusAll(context.Background())
+	if err != nil {
+		t.Fatalf("status all: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("status all = %d, want 2", len(statuses))
+	}
+
+	seen := map[string]bool{}
+	for _, status := range statuses {
+		seen[status.ProjectID] = true
+	}
+	if !seen[first.ID] || !seen[second.ID] {
+		t.Errorf("status all ids = %v, want both projects", seen)
+	}
+}
+
+func TestStopRemovesTheStack(t *testing.T) {
+	service, rec := testService(t, Options{})
+
+	item, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	env := item.Environments[0]
+	stack := StackName(item, env)
+
+	if err := service.Stop(context.Background(), item.ID, env.ID); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if _, ok := rec.find("stack", "rm", stack); !ok {
+		t.Error("the stack was not removed")
+	}
+
+	if err := service.Stop(context.Background(), "missing", env.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing project: %v, want %v", err, ErrNotFound)
+	}
+	if err := service.Stop(context.Background(), item.ID, "missing"); !errors.Is(err, ErrEnvNotFound) {
+		t.Errorf("missing env: %v, want %v", err, ErrEnvNotFound)
+	}
+}
+
+func TestTeardownIgnoresNothingFound(t *testing.T) {
+	service, rec := testService(t, Options{})
+	rec.reply = func(cmd Command) ([]string, error) {
+		if strings.Contains(cmd.String(), "stack rm") {
+			return nil, errors.New("Nothing found in stack: stk-storefront-production")
+		}
+		return nil, nil
+	}
+
+	item, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := service.Stop(context.Background(), item.ID, item.Environments[0].ID); err != nil {
+		t.Fatalf("stop with nothing found: %v", err)
+	}
+}
+
+func TestTeardownReportsARealDockerError(t *testing.T) {
+	service, rec := testService(t, Options{})
+	rec.reply = func(cmd Command) ([]string, error) {
+		if strings.Contains(cmd.String(), "stack rm") {
+			return nil, errors.New("Cannot connect to the Docker daemon")
+		}
+		return nil, nil
+	}
+
+	item, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := service.Stop(context.Background(), item.ID, item.Environments[0].ID); err == nil {
+		t.Fatal("stop swallowed a docker error")
+	}
+
+	// Delete still succeeds: the record has to go even when docker is down.
+	if err := service.Delete(context.Background(), item.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+}
+
+func TestCancelStopsALiveRun(t *testing.T) {
+	service, rec := testService(t, Options{})
+
+	release := make(chan struct{})
+	rec.reply = func(cmd Command) ([]string, error) {
+		if strings.Contains(cmd.String(), "stack deploy") {
+			<-release
+			return nil, context.Canceled
+		}
+		return nil, nil
+	}
+
+	item, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	deployment, err := service.Deploy(item.ID, item.Environments[0].ID, DeployRequest{})
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	waitFor(t, "the run to reach deploy", func() bool {
+		_, ok := rec.find("stack", "deploy")
+		return ok
+	})
+
+	live, err := service.Logs(deployment.ID, 0)
+	if err != nil {
+		t.Fatalf("live logs: %v", err)
+	}
+	if live.Done {
+		t.Error("live logs reported the run as done")
+	}
+	if len(live.Lines) == 0 {
+		t.Error("live logs were empty")
+	}
+
+	if err := service.Cancel(deployment.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	close(release)
+
+	waitFor(t, "the run to cancel", func() bool {
+		stored, err := service.Deployment(deployment.ID)
+		return err == nil && stored.Status.Done()
+	})
+	stored, _ := service.Deployment(deployment.ID)
+	if stored.Status != StatusCancelled {
+		t.Errorf("status = %q, want cancelled", stored.Status)
+	}
+
+	if err := service.Cancel(deployment.ID); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("second cancel: %v, want %v", err, ErrNotRunning)
+	}
+}
+
+func TestUpdateRenameTearsDownTheOldStack(t *testing.T) {
+	service, rec := testService(t, Options{})
+
+	item, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	oldStack := StackName(item, item.Environments[0])
+
+	update := writeRequest()
+	update.Name = "shop"
+	update.Environments[0].ID = item.Environments[0].ID
+	saved, err := service.Update(context.Background(), item.ID, update)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if saved.Name != "shop" {
+		t.Errorf("name = %q, want shop", saved.Name)
+	}
+	if _, ok := rec.find("stack", "rm", oldStack); !ok {
+		t.Error("the renamed project's old stack was not torn down")
+	}
+}
+
+func TestDeployAlwaysPull(t *testing.T) {
+	t.Run("build gets --pull", func(t *testing.T) {
+		service, rec := testService(t, Options{})
+
+		req := writeRequest()
+		req.Compose = "services:\n  web:\n    build: .\n"
+		req.Environments[0].Deploy.AlwaysPull = true
+		item, err := service.Create(req)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+
+		deployment, err := service.Deploy(item.ID, item.Environments[0].ID, DeployRequest{})
+		if err != nil {
+			t.Fatalf("deploy: %v", err)
+		}
+		waitFor(t, "the run to finish", func() bool {
+			stored, err := service.Deployment(deployment.ID)
+			return err == nil && stored.Status.Done()
+		})
+
+		build, ok := rec.find("compose", "build")
+		if !ok {
+			t.Fatal("nothing was built")
+		}
+		if !strings.Contains(build.String(), "--pull") {
+			t.Errorf("build args = %q, want --pull", build.String())
+		}
+	})
+
+	t.Run("image-only pulls then continues on failure", func(t *testing.T) {
+		service, rec := testService(t, Options{})
+		rec.reply = func(cmd Command) ([]string, error) {
+			if strings.Contains(cmd.String(), " pull ") {
+				return []string{"unauthorized"}, errors.New("pull failed")
+			}
+			return nil, nil
+		}
+
+		req := writeRequest()
+		req.Environments[0].Deploy.AlwaysPull = true
+		item, err := service.Create(req)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+
+		deployment, err := service.Deploy(item.ID, item.Environments[0].ID, DeployRequest{})
+		if err != nil {
+			t.Fatalf("deploy: %v", err)
+		}
+		waitFor(t, "the run to finish", func() bool {
+			stored, err := service.Deployment(deployment.ID)
+			return err == nil && stored.Status.Done()
+		})
+
+		stored, _ := service.Deployment(deployment.ID)
+		if stored.Status != StatusSucceeded {
+			t.Fatalf("status = %q (%s), want succeeded\n%s", stored.Status, stored.Error, stored.Log)
+		}
+		if _, ok := rec.find("compose", "pull", "--ignore-buildable"); !ok {
+			t.Error("images were not pulled")
+		}
+		if !strings.Contains(stored.Log, "pull failed, continuing") {
+			t.Errorf("log = %s, want it to keep going after a pull failure", stored.Log)
+		}
+	})
+}
+
+func TestCloneURLAndTokenRedaction(t *testing.T) {
+	cases := []struct {
+		name        string
+		repo        string
+		token       string
+		tokenErr    error
+		wantURL     string
+		wantDisplay string
+		wantErr     error
+		wantMasked  bool
+	}{
+		{"empty repo", "", "", nil, "", "", ErrRepoRequired, false},
+		{"owner name", "acme/app", "", nil, "https://github.com/acme/app.git", "https://github.com/acme/app.git", nil, false},
+		{
+			name:        "https github token",
+			repo:        "acme/app",
+			token:       "ghs_secret",
+			wantURL:     "https://x-access-token:ghs_secret@github.com/acme/app.git",
+			wantDisplay: "https://github.com/acme/app.git",
+			wantMasked:  true,
+		},
+		{
+			name:        "ssh ignores token",
+			repo:        "git@github.com:acme/app.git",
+			token:       "ghs_secret",
+			wantURL:     "git@github.com:acme/app.git",
+			wantDisplay: "git@github.com:acme/app.git",
+		},
+		{
+			name:        "token error is not fatal",
+			repo:        "acme/app",
+			tokenErr:    errors.New("github is not connected"),
+			wantURL:     "https://github.com/acme/app.git",
+			wantDisplay: "https://github.com/acme/app.git",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := Options{}
+			if tc.token != "" || tc.tokenErr != nil {
+				opts.Token = func(context.Context) (string, error) { return tc.token, tc.tokenErr }
+			}
+			service, _ := testService(t, opts)
+
+			url, display, err := service.engine.cloneURL(context.Background(), Project{
+				Git: GitSource{Repo: tc.repo},
+			}, &run{})
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("cloneURL: %v", err)
+			}
+			if url != tc.wantURL {
+				t.Errorf("url = %q, want %q", url, tc.wantURL)
+			}
+			if display != tc.wantDisplay {
+				t.Errorf("display = %q, want %q", display, tc.wantDisplay)
+			}
+		})
+	}
+
+	service, rec := testService(t, Options{
+		Token: func(context.Context) (string, error) { return "ghs_live_secret_token", nil },
+	})
+	rec.reply = func(cmd Command) ([]string, error) {
+		return []string{"fatal: using ghs_live_secret_token"}, nil
+	}
+
+	req := writeRequest()
+	req.SourceKind = SourceGit
+	req.Compose = ""
+	req.Git = GitSource{Repo: "acme/store", Branch: "main", ComposePath: "docker-compose.yml"}
+	item, err := service.Create(req)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	deployment, err := service.Deploy(item.ID, item.Environments[0].ID, DeployRequest{})
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	waitFor(t, "the run to finish", func() bool {
+		stored, err := service.Deployment(deployment.ID)
+		return err == nil && stored.Status.Done()
+	})
+
+	clone, ok := rec.find("git", "clone")
+	if !ok {
+		t.Fatal("the repository was not cloned")
+	}
+	if !strings.Contains(clone.String(), "x-access-token:ghs_live_secret_token@github.com/acme/store.git") {
+		t.Errorf("clone = %q, want the token in the git URL", clone.String())
+	}
+
+	stored, _ := service.Deployment(deployment.ID)
+	if strings.Contains(stored.Log, "ghs_live_secret_token") {
+		t.Errorf("the token reached the log:\n%s", stored.Log)
+	}
+	if !strings.Contains(stored.Log, "https://github.com/acme/store.git") {
+		t.Errorf("log = %s, want the display URL", stored.Log)
+	}
+}
+
+func TestRecoverRemovesAbandonedWorkspaces(t *testing.T) {
+	service, _ := testService(t, Options{})
+
+	orphan := filepath.Join(service.engine.workRoot, "orphan")
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "leftover"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := service.Recover(); err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	entries, err := os.ReadDir(service.engine.workRoot)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("abandoned workspace survived: %v", entries)
+	}
+}
+
+func TestDeploymentsLimitDefaults(t *testing.T) {
+	service, _ := testService(t, Options{})
+
+	item, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		row := Deployment{
+			ID: newID(), ProjectID: item.ID, ProjectName: item.Name,
+			EnvironmentID: item.Environments[0].ID, Environment: "production",
+			Status: StatusSucceeded, StartedAt: timeNow().Add(time.Duration(i) * time.Second),
+		}
+		if err := service.repo.CreateDeployment(&row); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	all, err := service.Deployments(item.ID, 0)
+	if err != nil {
+		t.Fatalf("default limit: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("default = %d, want 3", len(all))
+	}
+
+	capped, err := service.Deployments(item.ID, 1)
+	if err != nil {
+		t.Fatalf("limit 1: %v", err)
+	}
+	if len(capped) != 1 {
+		t.Fatalf("capped = %d, want 1", len(capped))
+	}
+}
+
+func TestLogsUnknownDeployment(t *testing.T) {
+	service, _ := testService(t, Options{})
+	if _, err := service.Logs("missing", 0); !errors.Is(err, ErrDeployNotFound) {
+		t.Fatalf("error = %v, want %v", err, ErrDeployNotFound)
+	}
+}
+
+func TestEmitTruncatesTheLog(t *testing.T) {
+	service, _ := testService(t, Options{})
+	state := &run{}
+	for i := 0; i < 5002; i++ {
+		service.engine.emit(state, "line")
+	}
+	if len(state.lines) != 5000 {
+		t.Fatalf("lines = %d, want 5000", len(state.lines))
+	}
+	if state.lines[4999] != "--> log truncated" {
+		t.Errorf("last = %q", state.lines[4999])
+	}
+}
+
+func TestUpdateRejectsATakenName(t *testing.T) {
+	service, _ := testService(t, Options{})
+	if _, err := service.Create(writeRequest()); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	other := writeRequest()
+	other.Name = "other"
+	other.Environments[0].Domains[0].Host = "other.acme.dev"
+	item, err := service.Create(other)
+	if err != nil {
+		t.Fatalf("create other: %v", err)
+	}
+
+	clash := writeRequest()
+	clash.Environments[0].ID = item.Environments[0].ID
+	clash.Environments[0].Domains[0].Host = "other.acme.dev"
+	if _, err := service.Update(context.Background(), item.ID, clash); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("error = %v, want %v", err, ErrNameTaken)
+	}
+}
+
+func TestCreateAcceptsBlankDomainRowsAndDefaults(t *testing.T) {
+	service, _ := testService(t, Options{})
+
+	req := writeRequest()
+	req.Environments[0].Domains = append(req.Environments[0].Domains, DomainRequest{})
+	req.Environments[0].Variables = []EnvVar{{Key: " ", Value: "skip"}, {Key: "NODE_ENV", Value: "production"}}
+	req.Environments[0].Trigger = DeployTrigger{Kind: "nope", Pattern: " * "}
+	req.Environments[0].Deploy.Strategy = "canary"
+	req.Environments[0].Deploy.HealthGraceSec = 9000
+	req.Environments[0].Domains[0].TLS = "mystery"
+	req.Environments[0].Domains[0].Port = 0
+
+	item, err := service.Create(req)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	env := item.Environments[0]
+	if len(env.Domains) != 1 {
+		t.Fatalf("domains = %d, want the blank row dropped", len(env.Domains))
+	}
+	if env.Domains[0].Port != 80 {
+		t.Errorf("port = %d, want 80", env.Domains[0].Port)
+	}
+	if env.Domains[0].TLS != TLSAuto {
+		t.Errorf("tls = %q, want auto", env.Domains[0].TLS)
+	}
+	if env.Deploy.Strategy != StrategyRolling {
+		t.Errorf("strategy = %q, want rolling", env.Deploy.Strategy)
+	}
+	if env.Deploy.HealthGraceSec != 30 {
+		t.Errorf("health grace = %d, want 30", env.Deploy.HealthGraceSec)
+	}
+	if env.Trigger.Kind != TriggerManual {
+		t.Errorf("trigger = %q, want manual", env.Trigger.Kind)
+	}
+	if len(env.Variables) != 1 || env.Variables[0].Key != "NODE_ENV" {
+		t.Errorf("variables = %+v, want the blank key dropped", env.Variables)
+	}
+}
+
+func TestCreateRejectsADuplicateHostInsideTheProject(t *testing.T) {
+	service, _ := testService(t, Options{})
+
+	req := writeRequest()
+	req.Environments = append(req.Environments, EnvironmentRequest{
+		Name:    "staging",
+		Domains: []DomainRequest{{Host: "shop.acme.dev", Service: "web", Port: 3000}},
+	})
+	if _, err := service.Create(req); !errors.Is(err, ErrDomainTaken) {
+		t.Fatalf("error = %v, want %v", err, ErrDomainTaken)
+	}
+}
+
+func TestEnvMapSecretsWinAKeyCollision(t *testing.T) {
+	got := envMap(Environment{
+		Variables: []EnvVar{{Key: "TOKEN", Value: "public"}},
+		Secrets:   []EnvVar{{Key: "TOKEN", Value: "secret"}, {Key: " ", Value: "skip"}},
+	})
+	if got["TOKEN"] != "secret" {
+		t.Errorf("TOKEN = %q, want the secret", got["TOKEN"])
+	}
+	if _, ok := got[""]; ok {
+		t.Error("a blank key leaked into the environment")
+	}
 }
