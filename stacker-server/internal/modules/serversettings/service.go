@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,11 @@ type dockerService struct {
 		RunningTasks int
 		DesiredTasks int
 	}
+}
+
+type dockerServiceListItem struct {
+	Name     string
+	Replicas string
 }
 
 type dynamicConfig struct {
@@ -243,9 +249,8 @@ func (s *Service) readService(ctx context.Context, target string) ServiceInfo {
 		return info
 	}
 	info.Image = service.Spec.TaskTemplate.ContainerSpec.Image
-	info.Running = service.ServiceStatus.RunningTasks
-	info.Desired = service.ServiceStatus.DesiredTasks
 	info.UpdatedAt = service.UpdatedAt
+	info.Running, info.Desired = s.readReplicas(ctx, name)
 	info.Status = "degraded"
 	if info.Desired > 0 && info.Running == info.Desired {
 		info.Status = "healthy"
@@ -257,6 +262,30 @@ func (s *Service) readService(ctx context.Context, target string) ServiceInfo {
 		}
 	}
 	return info
+}
+
+func (s *Service) readReplicas(ctx context.Context, name string) (int, int) {
+	output, err := s.run(ctx, "docker", "service", "ls", "--filter", "name="+name, "--format", "{{json .}}")
+	if err != nil {
+		return 0, 0
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(output)), "\n") {
+		var item dockerServiceListItem
+		if json.Unmarshal([]byte(line), &item) != nil || item.Name != name {
+			continue
+		}
+		parts := strings.SplitN(item.Replicas, "/", 2)
+		if len(parts) != 2 {
+			return 0, 0
+		}
+		running, runningErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+		desired, desiredErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if runningErr != nil || desiredErr != nil {
+			return 0, 0
+		}
+		return running, desired
+	}
+	return 0, 0
 }
 
 func contains(values []string, target string) bool {

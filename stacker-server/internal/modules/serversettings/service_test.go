@@ -64,6 +64,10 @@ func TestGetReadsOnlyStackerRoutingAndServiceState(t *testing.T) {
 		if args[0] == "info" {
 			return []byte(`{"ServerVersion":"27.5.1","OperatingSystem":"Ubuntu"}`), nil
 		}
+		if args[1] == "ls" {
+			name := args[3][len("name="):]
+			return []byte(`{"Name":"` + name + `","Replicas":"1/1"}`), nil
+		}
 		name := args[2]
 		image := "stacker:local"
 		if name == "stacker_traefik" {
@@ -85,6 +89,36 @@ func TestGetReadsOnlyStackerRoutingAndServiceState(t *testing.T) {
 	}
 	if info.TraefikService.Version != "v3.6" || info.TraefikService.Status != "healthy" {
 		t.Fatalf("service = %#v", info.TraefikService)
+	}
+}
+
+func TestReadServiceGetsReplicasFromServiceList(t *testing.T) {
+	service := NewService("unused", "stacker")
+	service.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[1] == "inspect" {
+			return []byte(`{"Spec":{"Name":"stacker_stacker","TaskTemplate":{"ContainerSpec":{"Image":"stacker:local"}}}}`), nil
+		}
+		return []byte("{\"Name\":\"another_service\",\"Replicas\":\"3/3\"}\n{\"Name\":\"stacker_stacker\",\"Replicas\":\"1/1\"}"), nil
+	}
+
+	info := service.readService(context.Background(), "stacker")
+	if info.Running != 1 || info.Desired != 1 || info.Status != "healthy" {
+		t.Fatalf("service = %#v", info)
+	}
+}
+
+func TestReadServiceDegradesWhenReplicaStateIsInvalid(t *testing.T) {
+	service := NewService("unused", "stacker")
+	service.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[1] == "inspect" {
+			return []byte(`{"Spec":{"Name":"stacker_stacker"}}`), nil
+		}
+		return []byte(`{"Name":"stacker_stacker","Replicas":"pending"}`), nil
+	}
+
+	info := service.readService(context.Background(), "stacker")
+	if info.Running != 0 || info.Desired != 0 || info.Status != "degraded" {
+		t.Fatalf("service = %#v", info)
 	}
 }
 
