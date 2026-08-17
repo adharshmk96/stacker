@@ -20,7 +20,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
   -o /out/stacker .
 
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates docker-cli git openssh-client sshpass tzdata
+# docker-cli-compose is the `docker compose` plugin: the deploy builds images
+# with `docker compose build` before handing the stack to `docker stack deploy`,
+# and without the plugin docker rejects the -f flag outright.
+RUN apk add --no-cache ca-certificates docker-cli docker-cli-compose git openssh-client sshpass tzdata
 COPY --from=server /out/stacker /usr/local/bin/stacker
 RUN mkdir -p /data
 VOLUME ["/data"]
