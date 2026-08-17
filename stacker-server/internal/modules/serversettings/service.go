@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-yaml"
 )
 
 var (
@@ -18,6 +20,7 @@ var (
 	ErrConfigMissing = errors.New("traefik configuration is not available on this installation")
 	ErrUnknownTarget = errors.New("restart target must be stacker or traefik")
 	hostRule         = regexp.MustCompile(`Host\x28\x60([^\x60]+)\x60\x29`)
+	stackerRuleLine  = regexp.MustCompile(`(?m)(^    stacker:\r?\n(?:      .*\r?\n)*?      rule:\s*["']?)Host\x28\x60([^\x60]+)\x60\x29(["']?\s*)$`)
 	labelPattern     = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 )
 
@@ -28,6 +31,52 @@ var BuiltAt = ""
 type dockerInfo struct {
 	ServerVersion   string
 	OperatingSystem string
+}
+
+type dockerService struct {
+	Spec struct {
+		Name         string
+		TaskTemplate struct {
+			ContainerSpec struct{ Image string }
+		}
+	}
+	UpdatedAt     time.Time
+	ServiceStatus struct {
+		RunningTasks int
+		DesiredTasks int
+	}
+}
+
+type dynamicConfig struct {
+	HTTP struct {
+		Routers map[string]struct {
+			Rule        string
+			EntryPoints []string `yaml:"entryPoints"`
+			Service     string
+			TLS         *struct {
+				CertResolver string `yaml:"certResolver"`
+			}
+		}
+		Services map[string]struct {
+			LoadBalancer struct {
+				Servers []struct{ URL string }
+			} `yaml:"loadBalancer"`
+		}
+	} `yaml:"http"`
+}
+
+type staticConfig struct {
+	EntryPoints map[string]struct {
+		Address string
+		HTTP    struct {
+			Redirections struct {
+				EntryPoint struct {
+					To     string
+					Scheme string
+				} `yaml:"entryPoint"`
+			}
+		}
+	} `yaml:"entryPoints"`
 }
 
 type command func(context.Context, string, ...string) ([]byte, error)
@@ -56,10 +105,13 @@ func (s *Service) Get(ctx context.Context) (Settings, error) {
 		hostname = "unknown"
 	}
 
-	domain, err := s.readDomain()
+	traefik, err := s.readTraefik()
 	if err != nil && !errors.Is(err, ErrConfigMissing) {
 		return Settings{}, err
 	}
+	traefik.StackName = s.stackName
+	traefik.StackerService = s.readService(ctx, "stacker")
+	traefik.TraefikService = s.readService(ctx, "traefik")
 
 	instance := Instance{Hostname: hostname, Version: Version, BuiltAt: BuiltAt, StartedAt: s.startedAt}
 	if output, err := s.run(ctx, "docker", "info", "--format", "{{json .}}"); err == nil {
@@ -69,7 +121,7 @@ func (s *Service) Get(ctx context.Context) (Settings, error) {
 			instance.OS = info.OperatingSystem
 		}
 	}
-	return Settings{Instance: instance, Domain: domain}, nil
+	return Settings{Instance: instance, Traefik: traefik}, nil
 }
 
 func (s *Service) UpdateDomain(domain string) (string, error) {
@@ -85,11 +137,11 @@ func (s *Service) UpdateDomain(domain string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !hostRule.Match(content) {
+	if !stackerRuleLine.Match(content) {
 		return "", fmt.Errorf("%w: host rule is missing", ErrConfigMissing)
 	}
 
-	updated := hostRule.ReplaceAll(content, []byte("Host(`"+domain+"`)"))
+	updated := stackerRuleLine.ReplaceAll(content, []byte("${1}Host(`"+domain+"`)${3}"))
 	tmp, err := os.CreateTemp(filepath.Dir(s.configPath), ".stacker-domain-*")
 	if err != nil {
 		return "", err
@@ -128,19 +180,92 @@ func (s *Service) Restart(ctx context.Context, target string) error {
 	return nil
 }
 
-func (s *Service) readDomain() (string, error) {
+func (s *Service) readTraefik() (TraefikInfo, error) {
 	content, err := os.ReadFile(s.configPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", ErrConfigMissing
+		return TraefikInfo{}, ErrConfigMissing
 	}
 	if err != nil {
-		return "", err
+		return TraefikInfo{}, err
 	}
-	match := hostRule.FindSubmatch(content)
+	var dynamic dynamicConfig
+	if err := yaml.Unmarshal(content, &dynamic); err != nil {
+		return TraefikInfo{}, fmt.Errorf("read traefik dynamic config: %w", err)
+	}
+	router, ok := dynamic.HTTP.Routers["stacker"]
+	if !ok {
+		return TraefikInfo{}, ErrConfigMissing
+	}
+	match := hostRule.FindStringSubmatch(router.Rule)
 	if len(match) != 2 {
-		return "", ErrConfigMissing
+		return TraefikInfo{}, ErrConfigMissing
 	}
-	return string(match[1]), nil
+
+	info := TraefikInfo{
+		Domain:              match[1],
+		HTTPS:               router.TLS != nil && contains(router.EntryPoints, "websecure"),
+		CertificateResolver: "",
+		StackName:           s.stackName,
+		PublishedPorts:      []string{},
+	}
+	if router.TLS != nil {
+		info.CertificateResolver = router.TLS.CertResolver
+	}
+	if backend, ok := dynamic.HTTP.Services[router.Service]; ok && len(backend.LoadBalancer.Servers) > 0 {
+		info.BackendTarget = backend.LoadBalancer.Servers[0].URL
+	}
+
+	staticPath := filepath.Join(filepath.Dir(filepath.Dir(s.configPath)), "traefik.yml")
+	if staticContent, readErr := os.ReadFile(staticPath); readErr == nil {
+		var static staticConfig
+		if yaml.Unmarshal(staticContent, &static) == nil {
+			web := static.EntryPoints["web"]
+			info.HTTPRedirect = web.HTTP.Redirections.EntryPoint.To == "websecure" && web.HTTP.Redirections.EntryPoint.Scheme == "https"
+			for _, name := range []string{"web", "websecure"} {
+				if address := static.EntryPoints[name].Address; address != "" {
+					info.PublishedPorts = append(info.PublishedPorts, address)
+				}
+			}
+		}
+	}
+	return info, nil
+}
+
+func (s *Service) readService(ctx context.Context, target string) ServiceInfo {
+	name := s.stackName + "_" + target
+	info := ServiceInfo{Name: name, Status: "unavailable"}
+	output, err := s.run(ctx, "docker", "service", "inspect", name, "--format", "{{json .}}")
+	if err != nil {
+		return info
+	}
+	var service dockerService
+	if json.Unmarshal(output, &service) != nil {
+		return info
+	}
+	info.Image = service.Spec.TaskTemplate.ContainerSpec.Image
+	info.Running = service.ServiceStatus.RunningTasks
+	info.Desired = service.ServiceStatus.DesiredTasks
+	info.UpdatedAt = service.UpdatedAt
+	info.Status = "degraded"
+	if info.Desired > 0 && info.Running == info.Desired {
+		info.Status = "healthy"
+	}
+	if target == "traefik" {
+		image := strings.Split(info.Image, "@")[0]
+		if _, version, found := strings.Cut(image, ":"); found {
+			info.Version = version
+		}
+	}
+	return info
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func validDomain(value string) bool {

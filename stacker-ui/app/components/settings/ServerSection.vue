@@ -1,7 +1,27 @@
 <script setup lang="ts">
 interface ServerSettings {
   instance: { hostname: string, version: string, builtAt?: string, startedAt: string, docker?: string, os?: string }
-  domain: string
+  traefik: {
+    domain: string
+    https: boolean
+    certificateResolver?: string
+    backendTarget?: string
+    httpRedirect: boolean
+    publishedPorts: string[]
+    stackName: string
+    stackerService: ServiceInfo
+    traefikService: ServiceInfo
+  }
+}
+
+interface ServiceInfo {
+  name: string
+  image?: string
+  version?: string
+  running: number
+  desired: number
+  status: 'healthy' | 'degraded' | 'unavailable'
+  updatedAt?: string
 }
 
 const api = useApi()
@@ -32,8 +52,8 @@ async function load() {
   loadError.value = ''
   try {
     settings.value = await api.get<ServerSettings>('/server')
-    domain.value = settings.value.domain
-    savedDomain.value = settings.value.domain
+    domain.value = settings.value.traefik.domain
+    savedDomain.value = settings.value.traefik.domain
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : 'Could not load server settings'
   } finally {
@@ -75,6 +95,8 @@ async function restart(target: 'stacker' | 'traefik') {
 const formatDate = (value?: string) => value
   ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
   : '—'
+const formatDateTime = (value?: string) => value ? new Date(value).toLocaleString() : '—'
+const statusColor = (status: ServiceInfo['status']) => status === 'healthy' ? 'success' : status === 'degraded' ? 'warning' : 'neutral'
 
 onMounted(() => {
   load()
@@ -116,10 +138,62 @@ onUnmounted(() => clearInterval(clock))
     <UFormField label="Stacker domain" hint="Hostname only — no https:// or path" class="max-w-xl">
       <UInput v-model="domain" placeholder="stacker.203.0.113.10.sslip.io" class="w-full" />
     </UFormField>
+
+    <dl v-if="settings" class="mt-5 grid gap-4 border-t border-default pt-4 sm:grid-cols-2">
+      <div v-for="field in [
+        { label: 'HTTPS', value: settings.traefik.https ? 'Enabled' : 'Disabled' },
+        { label: 'Certificate resolver', value: settings.traefik.certificateResolver || 'None' },
+        { label: 'Backend target', value: settings.traefik.backendTarget || 'Unavailable' },
+        { label: 'HTTP redirect', value: settings.traefik.httpRedirect ? 'HTTP → HTTPS' : 'Disabled' }
+      ]" :key="field.label">
+        <dt class="text-xs uppercase tracking-[0.08em] text-dimmed">{{ field.label }}</dt>
+        <dd class="mt-1 font-mono text-sm text-highlighted">{{ field.value }}</dd>
+      </div>
+    </dl>
     <template #footer>
       <UButton label="Discard" color="neutral" variant="ghost" :disabled="!domainDirty" @click="domain = savedDomain" />
       <UButton label="Save domain" icon="i-lucide-save" :loading="savingDomain" :disabled="!domainDirty || !domain.trim()" @click="saveDomain" />
     </template>
+  </SettingsSection>
+
+  <SettingsSection title="Services" description="Live Docker Swarm state for Stacker and its Traefik proxy.">
+    <div v-if="settings" class="grid gap-3 sm:grid-cols-2">
+      <div
+        v-for="service in [settings.traefik.stackerService, settings.traefik.traefikService]"
+        :key="service.name"
+        class="rounded-md border border-default p-4"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <p class="font-medium text-highlighted">{{ service.name.endsWith('_traefik') ? 'Traefik' : 'Stacker' }}</p>
+          <UBadge :label="service.status" :color="statusColor(service.status)" variant="subtle" />
+        </div>
+        <dl class="mt-4 grid gap-3 text-sm">
+          <div class="flex justify-between gap-4">
+            <dt class="text-dimmed">Replicas</dt>
+            <dd class="font-mono text-highlighted">{{ service.running }}/{{ service.desired }}</dd>
+          </div>
+          <div v-if="service.version" class="flex justify-between gap-4">
+            <dt class="text-dimmed">Version</dt>
+            <dd class="font-mono text-highlighted">{{ service.version }}</dd>
+          </div>
+          <div class="flex justify-between gap-4">
+            <dt class="text-dimmed">Last updated</dt>
+            <dd class="font-mono text-highlighted">{{ formatDateTime(service.updatedAt) }}</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+
+    <dl v-if="settings" class="mt-4 grid gap-4 border-t border-default pt-4 sm:grid-cols-2">
+      <div>
+        <dt class="text-xs uppercase tracking-[0.08em] text-dimmed">Swarm stack</dt>
+        <dd class="mt-1 font-mono text-sm text-highlighted">{{ settings.traefik.stackName }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-[0.08em] text-dimmed">Published ports</dt>
+        <dd class="mt-1 font-mono text-sm text-highlighted">{{ settings.traefik.publishedPorts.join(', ') || 'Unavailable' }}</dd>
+      </div>
+    </dl>
   </SettingsSection>
 
   <SettingsSection title="Maintenance" description="Restart Stacker services running in Docker Swarm.">

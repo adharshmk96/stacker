@@ -12,8 +12,30 @@ type Instance struct {
 }
 
 type Settings struct {
-	Instance Instance `json:"instance"`
-	Domain   string   `json:"domain"`
+	Instance Instance    `json:"instance"`
+	Traefik  TraefikInfo `json:"traefik"`
+}
+
+type TraefikInfo struct {
+	Domain              string      `json:"domain"`
+	HTTPS               bool        `json:"https"`
+	CertificateResolver string      `json:"certificateResolver,omitempty"`
+	BackendTarget       string      `json:"backendTarget,omitempty"`
+	HTTPRedirect        bool        `json:"httpRedirect"`
+	PublishedPorts      []string    `json:"publishedPorts"`
+	StackName           string      `json:"stackName"`
+	StackerService      ServiceInfo `json:"stackerService"`
+	TraefikService      ServiceInfo `json:"traefikService"`
+}
+
+type ServiceInfo struct {
+	Name      string    `json:"name"`
+	Image     string    `json:"image,omitempty"`
+	Version   string    `json:"version,omitempty"`
+	Running   int       `json:"running"`
+	Desired   int       `json:"desired"`
+	Status    string    `json:"status"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
 }
 
 type DomainRequest struct {
