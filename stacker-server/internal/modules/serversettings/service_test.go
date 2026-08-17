@@ -12,6 +12,7 @@ import (
 func TestGetReadsInstalledDomainAndDockerInfo(t *testing.T) {
 	path := writeConfig(t, "stacker.203.0.113.10.sslip.io")
 	service := NewService(path, "stacker")
+	service.advertiseAddr = "203.0.113.10"
 	service.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		return []byte(`{"ServerVersion":"27.5.1","OperatingSystem":"Ubuntu 24.04 LTS"}`), nil
 	}
@@ -22,6 +23,9 @@ func TestGetReadsInstalledDomainAndDockerInfo(t *testing.T) {
 	}
 	if result.Traefik.Domain != "stacker.203.0.113.10.sslip.io" {
 		t.Fatalf("domain = %q", result.Traefik.Domain)
+	}
+	if result.Instance.IP != "203.0.113.10" {
+		t.Fatalf("ip = %q", result.Instance.IP)
 	}
 	if result.Instance.Docker != "27.5.1" || result.Instance.OS != "Ubuntu 24.04 LTS" {
 		t.Fatalf("instance = %#v", result.Instance)

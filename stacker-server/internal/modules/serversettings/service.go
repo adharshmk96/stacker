@@ -88,10 +88,11 @@ type staticConfig struct {
 type command func(context.Context, string, ...string) ([]byte, error)
 
 type Service struct {
-	configPath string
-	stackName  string
-	startedAt  time.Time
-	run        command
+	configPath    string
+	stackName     string
+	advertiseAddr string
+	startedAt     time.Time
+	run           command
 }
 
 func NewService(configPath, stackName string) *Service {
@@ -119,7 +120,7 @@ func (s *Service) Get(ctx context.Context) (Settings, error) {
 	traefik.StackerService = s.readService(ctx, "stacker")
 	traefik.TraefikService = s.readService(ctx, "traefik")
 
-	instance := Instance{Hostname: hostname, Version: Version, BuiltAt: BuiltAt, StartedAt: s.startedAt}
+	instance := Instance{Hostname: hostname, IP: s.advertiseAddr, Version: Version, BuiltAt: BuiltAt, StartedAt: s.startedAt}
 	if output, err := s.run(ctx, "docker", "info", "--format", "{{json .}}"); err == nil {
 		var info dockerInfo
 		if json.Unmarshal(output, &info) == nil {

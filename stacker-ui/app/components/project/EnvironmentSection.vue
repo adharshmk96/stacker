@@ -13,6 +13,8 @@ const props = defineProps<{
    * reachable without a second stop; the Domains tab owns the full list.
    */
   showHost?: boolean
+  /** The create form requires one routable host for every environment. */
+  hostRequired?: boolean
 }>()
 
 /* ---- inline host ---- */
@@ -54,7 +56,9 @@ const extraDomains = computed(() => Math.max(0, props.environment.domains.length
  * The fields are opt-in: an environment with no host shows a single button, so
  * nothing about the create form suggests a domain is needed to deploy.
  */
-const hostOpen = ref(props.environment.domains.length > 0)
+const hostOpen = ref(props.hostRequired || props.environment.domains.length > 0)
+
+if (props.hostRequired) ensureDomain()
 
 function openHost() {
   ensureDomain()
@@ -140,10 +144,10 @@ function applyBulk() {
     <div v-if="showHost">
       <div class="mb-2 flex items-center justify-between gap-2">
         <h3 class="text-xs font-semibold uppercase tracking-[0.08em] text-dimmed">
-          Host <span class="font-normal normal-case tracking-normal">· optional</span>
+          Host <span v-if="!hostRequired" class="font-normal normal-case tracking-normal">· optional</span>
         </h3>
         <UButton
-          v-if="hostOpen"
+          v-if="hostOpen && !hostRequired"
           label="Remove"
           icon="i-lucide-x"
           size="xs"
@@ -164,7 +168,7 @@ function applyBulk() {
       />
 
       <div v-else class="grid gap-4 sm:grid-cols-4">
-        <UFormField label="Domain" name="env.host" class="sm:col-span-2">
+        <UFormField label="Domain" name="env.host" class="sm:col-span-2" :required="hostRequired">
           <UInput
             v-model="host"
             icon="i-lucide-globe"
@@ -187,7 +191,7 @@ function applyBulk() {
           https://{{ host }} → {{ service || 'service' }}:{{ port }} · certificate from Let's
           Encrypt.
         </template>
-        <template v-else>
+        <template v-else-if="!hostRequired">
           Without one, <span class="font-mono">{{ environment.name || 'this environment' }}</span>
           still deploys — it is just reachable only inside the swarm.
         </template>

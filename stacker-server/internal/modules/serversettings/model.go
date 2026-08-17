@@ -4,6 +4,7 @@ import "time"
 
 type Instance struct {
 	Hostname  string    `json:"hostname"`
+	IP        string    `json:"ip,omitempty"`
 	Version   string    `json:"version"`
 	BuiltAt   string    `json:"builtAt,omitempty"`
 	StartedAt time.Time `json:"startedAt"`

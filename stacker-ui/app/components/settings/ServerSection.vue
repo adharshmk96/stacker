@@ -1,6 +1,6 @@
 <script setup lang="ts">
 interface ServerSettings {
-  instance: { hostname: string, version: string, builtAt?: string, startedAt: string, docker?: string, os?: string }
+  instance: { hostname: string, ip?: string, version: string, builtAt?: string, startedAt: string, docker?: string, os?: string }
   traefik: {
     domain: string
     https: boolean

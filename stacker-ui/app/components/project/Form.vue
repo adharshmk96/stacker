@@ -15,6 +15,30 @@ const emit = defineEmits<{
 
 const state = reactive<ProjectPayload>(blankProject())
 
+const ipFrom = (host: string) => host.match(/(?:^|\.)(\d{1,3}(?:\.\d{1,3}){3})(?:\.|$)/)?.[1] ?? ''
+const dashboardIp = ref('')
+let generatedHost = ''
+
+watch([() => state.name, dashboardIp], ([name, ip]) => {
+  const domain = state.environments[0]!.domains[0] ?? blankDomain()
+  const hostName = name.trim().toLowerCase().replaceAll('_', '-')
+  const nextHost = hostName && ip ? `${hostName}.${ip}.nip.io` : ''
+
+  if (!state.environments[0]!.domains.length) state.environments[0]!.domains.push(domain)
+  if (!domain.host || domain.host === generatedHost) domain.host = nextHost
+  generatedHost = nextHost
+})
+
+onMounted(async () => {
+  try {
+    const settings = await useApi().get<{ instance: { ip?: string } }>('/server')
+    dashboardIp.value = ipFrom(settings.instance.ip ?? '')
+  } catch {
+    // The required-field validation remains the fallback when server settings
+    // are unavailable, instead of replacing a host the user enters manually.
+  }
+})
+
 const isGit = computed(() => state.sourceKind === 'git')
 
 const selectedEnvId = ref(state.environments[0]!.id)
@@ -65,6 +89,13 @@ function validate(state: ProjectPayload): FormError[] {
   if (unnamed) {
     selectedEnvId.value = unnamed.id
     errors.push({ name: 'env.name', message: 'Every environment needs a name' })
+    return errors
+  }
+
+  const missingHost = state.environments.find(env => !env.domains[0]?.host.trim())
+  if (missingHost) {
+    selectedEnvId.value = missingHost.id
+    errors.push({ name: 'env.host', message: 'Host is required' })
     return errors
   }
 
@@ -150,6 +181,7 @@ function onSubmit(event: FormSubmitEvent<ProjectPayload>) {
         :default-branch="state.git.branch"
         :show-branch="isGit"
         show-host
+        host-required
       />
     </section>
 

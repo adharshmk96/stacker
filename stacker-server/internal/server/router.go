@@ -60,7 +60,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	// Swarm browses docker through the nodes it is given, so it is built last.
 	swarmModule := swarm.New(nodeModule.Service, log)
 	githubModule := githubprovider.New(db, log)
-	serverModule := serversettings.New(cfg.TraefikDynamicPath, cfg.StackName)
+	serverModule := serversettings.New(cfg.TraefikDynamicPath, cfg.StackName, cfg.AdvertiseAddr)
 
 	// The machine stacker is installed on is a node like any other, so it is
 	// seeded on every start. A failure here is not fatal — the rest of the API
