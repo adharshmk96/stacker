@@ -81,6 +81,16 @@ public_ip() {
   printf '%s\n' "$address"
 }
 
+installed_stacker_host() {
+  docker volume inspect stacker-traefik-config >/dev/null 2>&1 || return 0
+
+  docker run --rm \
+    -v stacker-traefik-config:/config:ro \
+    alpine:3.23 sh -c 'cat /config/dynamic/stacker.yml 2>/dev/null' 2>/dev/null \
+    | sed -n 's/.*Host(`\([^`]*\)`).*/\1/p' \
+    | head -n 1
+}
+
 ensure_swarm_manager() {
   local address="$1"
   local state control
@@ -166,10 +176,18 @@ main() {
   install_base_tools
   ensure_docker
 
-  local advertise_addr detected_public_ip host
+  local advertise_addr host installed_host
   advertise_addr="$(local_ip)"
-  detected_public_ip="$(public_ip)"
-  host="${STACKER_HOST:-stacker.${detected_public_ip}.sslip.io}"
+  installed_host="$(installed_stacker_host)"
+
+  if [ -n "${STACKER_HOST:-}" ]; then
+    host="$STACKER_HOST"
+  elif [ -n "$installed_host" ]; then
+    host="$installed_host"
+    log "Preserving configured domain: $installed_host"
+  else
+    host="stacker.$(public_ip).sslip.io"
+  fi
 
   [[ "$STACK_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || die "STACKER_STACK_NAME contains invalid characters"
   [[ "$host" =~ ^[a-zA-Z0-9.-]+$ ]] || die "STACKER_HOST must be a DNS hostname"
