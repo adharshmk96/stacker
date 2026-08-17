@@ -5,21 +5,42 @@ const repositories = ref<GitHubRepository[]>([])
 const pending = ref(false)
 const error = ref<string | null>(null)
 
+let inflight: Promise<void> | null = null
+let loaded = false
+
 export function useGitHub() {
   const api = useApi()
 
-  async function load() {
+  /**
+   * Loads the app and its repositories.
+   *
+   * Guarded, because there are now two callers: the Settings page, which owns
+   * the connection, and the project form, which only wants the repository list
+   * to pick from. Two pages mounting at once should not mean two round trips,
+   * and neither should have to know the other exists.
+   */
+  async function load(force = false) {
+    if (loaded && !force) return
+    if (inflight) return inflight
+
     pending.value = true
     error.value = null
-    try {
-      app.value = await api.get<GitHubApp | null>('/github')
-      if (app.value?.installationId) await loadRepositories()
-      else repositories.value = []
-    } catch (err: any) {
-      error.value = err.message
-    } finally {
-      pending.value = false
-    }
+
+    inflight = (async () => {
+      try {
+        app.value = await api.get<GitHubApp | null>('/github')
+        if (app.value?.installationId) await loadRepositories()
+        else repositories.value = []
+        loaded = true
+      } catch (err: any) {
+        error.value = err.message
+      } finally {
+        pending.value = false
+        inflight = null
+      }
+    })()
+
+    return inflight
   }
 
   async function create(name: string, organization = '') {
@@ -62,6 +83,9 @@ export function useGitHub() {
     await api.del('/github')
     app.value = null
     repositories.value = []
+    // Cleared so the next load actually asks: reconnecting has to be able to
+    // repopulate a list this just emptied.
+    loaded = false
   }
 
   return { app, repositories, pending, error, load, create, install, loadRepositories, disconnect }

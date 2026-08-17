@@ -16,6 +16,8 @@ export interface GitHubRepository {
   fullName: string
   private: boolean
   htmlUrl: string
+  /** Used to fill in a project's branch when the repository is picked */
+  defaultBranch: string
 }
 
 export interface GitHubManifestStart {

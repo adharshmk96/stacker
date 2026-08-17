@@ -142,10 +142,11 @@ func (s *Service) Repositories(ctx context.Context) ([]Repository, error) {
 	}
 	var result struct {
 		Repositories []struct {
-			ID       int64
-			FullName string `json:"full_name"`
-			Private  bool
-			HTMLURL  string `json:"html_url"`
+			ID            int64
+			FullName      string `json:"full_name"`
+			Private       bool
+			HTMLURL       string `json:"html_url"`
+			DefaultBranch string `json:"default_branch"`
 		} `json:"repositories"`
 	}
 	if err := s.do(ctx, http.MethodGet, s.apiURL+"/installation/repositories?per_page=100", token, nil, &result); err != nil {
@@ -153,12 +154,33 @@ func (s *Service) Repositories(ctx context.Context) ([]Repository, error) {
 	}
 	repos := make([]Repository, 0, len(result.Repositories))
 	for _, r := range result.Repositories {
-		repos = append(repos, Repository{ID: r.ID, FullName: r.FullName, Private: r.Private, HTMLURL: r.HTMLURL})
+		repos = append(repos, Repository{
+			ID:            r.ID,
+			FullName:      r.FullName,
+			Private:       r.Private,
+			HTMLURL:       r.HTMLURL,
+			DefaultBranch: r.DefaultBranch,
+		})
 	}
 	return repos, nil
 }
 
 func (s *Service) Delete() error { return s.repo.Delete() }
+
+// CloneToken returns a short-lived installation token for git to authenticate a
+// clone with. It is what lets the deploy engine pull a private repository
+// without a stored credential of its own — the token is minted per deploy and
+// expires on GitHub's schedule, so nothing long-lived reaches the workspace.
+//
+// An installation that has not connected GitHub has no token to give, and that
+// is not an error here: a public repository clones without one.
+func (s *Service) CloneToken(ctx context.Context) (string, error) {
+	app, err := s.repo.Current()
+	if err != nil || app.InstallationID == 0 {
+		return "", nil
+	}
+	return s.installationToken(ctx, app)
+}
 
 func (s *Service) callbackApp(id, secret string) (App, error) {
 	app, err := s.repo.Get(id)

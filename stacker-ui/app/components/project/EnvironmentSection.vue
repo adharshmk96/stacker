@@ -271,7 +271,9 @@ function applyBulk() {
       </div>
 
       <p class="mb-2 text-xs text-dimmed">
-        Stored encrypted and mounted as docker secrets — never shown again after saving.
+        Passed to the services like variables, and kept out of deployment logs. The value is
+        never shown again after saving — leave it blank to keep the stored one, or remove the
+        row to clear it.
       </p>
 
       <p v-if="!environment.secrets.length" class="text-sm text-dimmed">No secrets yet.</p>

@@ -37,4 +37,8 @@ type Repository struct {
 	FullName string `json:"fullName"`
 	Private  bool   `json:"private"`
 	HTMLURL  string `json:"htmlUrl"`
+	// DefaultBranch lets a project pick up the right branch when a repository is
+	// chosen, instead of defaulting everyone to `main` and failing the clone on
+	// the repositories that never renamed from `master`.
+	DefaultBranch string `json:"defaultBranch"`
 }

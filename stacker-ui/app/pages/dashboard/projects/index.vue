@@ -3,10 +3,17 @@ import type { Project } from '~/types/project'
 
 useHead({ title: 'Projects · Stacker' })
 
-const { items, remove } = useProjects()
-const { items: deployments } = useDeployments()
+const toast = useToast()
+
+const { items, pending, error, load, remove, statusOf, refreshStatus } = useProjects()
 
 const search = ref('')
+
+onMounted(load)
+
+// The cards show what docker is running, which changes on its own — so it is
+// polled rather than read once on mount.
+useLivePoll(refreshStatus, 5000)
 
 const filtered = computed(() => {
   const term = search.value.trim().toLowerCase()
@@ -17,20 +24,42 @@ const filtered = computed(() => {
       .some(field => field.toLowerCase().includes(term)))
 })
 
-/** Newest deployment per project — the card's status line. */
-const lastDeployment = computed(() => {
-  const map = new Map<string, (typeof deployments.value)[number]>()
-  for (const deployment of deployments.value) {
-    const current = map.get(deployment.projectId)
-    if (!current || deployment.startedAt > current.startedAt) {
-      map.set(deployment.projectId, deployment)
-    }
-  }
-  return map
-})
-
 const sourceLabel = (project: Project) =>
   project.sourceKind === 'git' ? project.git.repo : 'compose file'
+
+/** Task totals across a project's environments — the card's `3/4 tasks`. */
+function tasks(id: string) {
+  const status = statusOf(id)
+  if (!status) return null
+
+  return status.environments.reduce(
+    (total, env) => ({ running: total.running + env.running, desired: total.desired + env.desired }),
+    { running: 0, desired: 0 })
+}
+
+const deleteTarget = ref<Project | null>(null)
+const deleting = ref(false)
+
+async function confirmDelete() {
+  const project = deleteTarget.value
+  if (!project) return
+
+  deleting.value = true
+  try {
+    await remove(project.id)
+    toast.add({
+      title: 'Project deleted',
+      description: `${project.name} and everything it was running`,
+      icon: 'i-lucide-trash-2',
+      color: 'success'
+    })
+    deleteTarget.value = null
+  } catch (err: any) {
+    toast.add({ title: 'Could not delete', description: err.message, color: 'error' })
+  } finally {
+    deleting.value = false
+  }
+}
 
 const formatDate = (value: string) =>
   new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
@@ -90,15 +119,20 @@ const formatDate = (value: string) =>
       <div class="stacker-grid pointer-events-none absolute inset-0" />
 
       <UAlert
-        title="Placeholder"
-        description="Projects are not wired to the stacker server yet — everything here lives in the browser and resets on reload."
-        icon="i-lucide-flask-conical"
-        color="neutral"
+        v-if="error"
+        :description="error"
+        title="Could not load projects"
+        icon="i-lucide-triangle-alert"
+        color="error"
         variant="subtle"
         class="mb-4 shrink-0"
       />
 
-      <div v-if="filtered.length" class="grid shrink-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div v-if="pending && !items.length" class="flex shrink-0 justify-center py-12">
+        <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-dimmed" />
+      </div>
+
+      <div v-else-if="filtered.length" class="grid shrink-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
         <NuxtLink
           v-for="project in filtered"
           :key="project.id"
@@ -116,6 +150,15 @@ const formatDate = (value: string) =>
               <p class="truncate font-medium text-highlighted">{{ project.name }}</p>
               <p class="truncate font-mono text-xs text-dimmed">{{ sourceLabel(project) }}</p>
             </div>
+
+            <UBadge
+              v-if="statusOf(project.id)"
+              :label="runtimeStateLabel[statusOf(project.id)!.state]"
+              :color="runtimeStateColor[statusOf(project.id)!.state]"
+              variant="subtle"
+              size="sm"
+            />
+
             <UButton
               icon="i-lucide-trash-2"
               color="error"
@@ -123,7 +166,7 @@ const formatDate = (value: string) =>
               size="xs"
               aria-label="Delete project"
               class="opacity-0 transition-opacity group-hover:opacity-100"
-              @click.prevent="remove(project.id)"
+              @click.prevent="deleteTarget = project"
             />
           </div>
 
@@ -140,17 +183,24 @@ const formatDate = (value: string) =>
               variant="subtle"
               class="font-mono text-[11px]"
             />
+            <UBadge
+              v-if="tasks(project.id)?.desired"
+              :label="`${tasks(project.id)!.running}/${tasks(project.id)!.desired} tasks`"
+              color="neutral"
+              variant="outline"
+              class="font-mono text-[11px]"
+            />
           </div>
 
           <div class="flex items-center justify-between gap-2 border-t border-default pt-3 text-xs">
-            <span v-if="lastDeployment.get(project.id)" class="flex items-center gap-1.5">
+            <span v-if="statusOf(project.id)?.lastDeployment" class="flex items-center gap-1.5">
               <UBadge
-                :label="lastDeployment.get(project.id)!.status"
-                :color="deploymentStatusColor[lastDeployment.get(project.id)!.status]"
+                :label="statusOf(project.id)!.lastDeployment!.status"
+                :color="deploymentStatusColor[statusOf(project.id)!.lastDeployment!.status]"
                 variant="subtle"
                 size="sm"
               />
-              <span class="text-dimmed">#{{ lastDeployment.get(project.id)!.number }}</span>
+              <span class="text-dimmed">#{{ statusOf(project.id)!.lastDeployment!.number }}</span>
             </span>
             <span v-else class="text-dimmed">Never deployed</span>
 
@@ -183,4 +233,24 @@ const formatDate = (value: string) =>
       </div>
     </template>
   </UDashboardPanel>
+
+  <UModal
+    :open="!!deleteTarget"
+    title="Delete project"
+    :description="`This removes ${deleteTarget?.name} from stacker and stops everything it is running. It cannot be undone.`"
+    @update:open="deleteTarget = null"
+  >
+    <template #footer>
+      <div class="flex w-full justify-end gap-2">
+        <UButton label="Cancel" color="neutral" variant="ghost" @click="deleteTarget = null" />
+        <UButton
+          label="Delete"
+          color="error"
+          icon="i-lucide-trash-2"
+          :loading="deleting"
+          @click="confirmDelete"
+        />
+      </div>
+    </template>
+  </UModal>
 </template>

@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"stacker/internal/config"
@@ -10,6 +11,7 @@ import (
 	"stacker/internal/modules/auth"
 	githubprovider "stacker/internal/modules/github"
 	"stacker/internal/modules/node"
+	"stacker/internal/modules/project"
 	"stacker/internal/modules/serversettings"
 	"stacker/internal/modules/sshkey"
 	"stacker/internal/modules/swarm"
@@ -62,6 +64,22 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	githubModule := githubprovider.New(db, log)
 	serverModule := serversettings.New(cfg.TraefikDynamicPath, cfg.StackName, cfg.AdvertiseAddr)
 
+	// Projects deploy on this machine's docker, so they take the installation's
+	// own paths rather than a node: the workspace they clone and build in, the
+	// Traefik directory their hostnames are published through, and the overlay
+	// network Traefik shares with whatever they deploy.
+	projectModule := project.New(db, project.Options{
+		WorkRoot:           filepath.Join(cfg.DataDir, "workspaces"),
+		TraefikDynamicPath: cfg.TraefikDynamicPath,
+		Network:            cfg.StackName + "_proxy",
+		Token:              githubModule.Service.CloneToken,
+	}, log)
+	// Runs live in the process that started them, so a row still marked running
+	// belongs to a process that is gone. Closing those out is startup work.
+	if err := projectModule.Service.Recover(); err != nil {
+		log.Error("could not reconcile deployments after restart", "error", err)
+	}
+
 	// The machine stacker is installed on is a node like any other, so it is
 	// seeded on every start. A failure here is not fatal — the rest of the API
 	// works without it.
@@ -85,6 +103,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	swarmModule.RegisterRoutes(protected)
 	githubModule.RegisterRoutes(protected)
 	serverModule.RegisterRoutes(protected)
+	projectModule.RegisterRoutes(protected)
 
 	// The embedded UI is the fallback, so it must be mounted after the API.
 	if err := web.Register(r); err != nil {

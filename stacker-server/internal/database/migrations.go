@@ -6,6 +6,7 @@ import (
 	"stacker/internal/modules/auth"
 	githubprovider "stacker/internal/modules/github"
 	"stacker/internal/modules/node"
+	"stacker/internal/modules/project"
 	"stacker/internal/modules/sshkey"
 
 	"gorm.io/gorm"
@@ -23,6 +24,9 @@ func models() []any {
 		&githubprovider.App{},
 		&sshkey.SshKey{},
 		&node.Node{},
+		&project.Project{},
+		&project.Environment{},
+		&project.Deployment{},
 	}
 }
 

@@ -1,12 +1,23 @@
-import type { Domain, Environment, Project, ProjectPayload } from '~/types/project'
+import type { Deployment } from '~/types/deployment'
+import type {
+  Domain,
+  Environment,
+  Project,
+  ProjectPayload,
+  ProjectStatus,
+  RuntimeState
+} from '~/types/project'
 
 /**
- * Projects — placeholder only.
+ * Projects, backed by the stacker server (`/api/projects`).
  *
- * There is no `/api/projects` yet, so the list lives in module scope and is
- * seeded with a couple of rows. Everything is synchronous and lost on reload;
- * when the server side lands this file becomes the only thing to rewrite
- * (compare `useNodes`, which has the same surface over real requests).
+ * Same shape as `useNodes`: one module-scope list shared by every page, written
+ * through after the server confirms each mutation.
+ *
+ * Live status is kept in a second map rather than folded into the project rows.
+ * A project is configuration and changes when someone saves it; its status is a
+ * reading of docker that changes on its own every few seconds, and merging the
+ * two would mean a poll could quietly overwrite an unsaved edit.
  */
 
 export function blankDomain(): Domain {
@@ -51,119 +62,144 @@ export function blankProject(): ProjectPayload {
   }
 }
 
-const now = new Date().toISOString()
+/** Badge colour per runtime state, shared by the cards and the detail page. */
+export const runtimeStateColor: Record<RuntimeState, 'primary' | 'success' | 'error' | 'neutral' | 'warning'> = {
+  running: 'success',
+  degraded: 'error',
+  deploying: 'primary',
+  stopped: 'neutral',
+  unknown: 'warning'
+}
 
-const items = ref<Project[]>([
-  {
-    id: 'p-storefront',
-    name: 'storefront',
-    description: 'Public web store and its edge cache',
-    sourceKind: 'git',
-    git: {
-      provider: 'github',
-      repo: 'acme/storefront',
-      branch: 'main',
-      composePath: 'deploy/docker-compose.yml'
-    },
-    compose: '',
-    environments: [
-      {
-        ...blankEnvironment('production'),
-        id: 'e-storefront-prod',
-        branch: 'main',
-        variables: [
-          { key: 'NODE_ENV', value: 'production' },
-          { key: 'API_URL', value: 'https://api.acme.dev' }
-        ],
-        secrets: [{ key: 'SESSION_SECRET', value: '••••••••' }],
-        domains: [
-          { id: 'd-shop', host: 'shop.acme.dev', service: 'web', port: 3000, tls: 'auto', redirectWww: true }
-        ],
-        trigger: { kind: 'tag', pattern: 'v*' },
-        deploy: {
-          strategy: 'rolling',
-          replicas: 3,
-          placement: 'node.labels.tier==edge',
-          healthGraceSec: 30,
-          autoRollback: true,
-          alwaysPull: false
-        }
-      },
-      {
-        ...blankEnvironment('staging'),
-        id: 'e-storefront-staging',
-        branch: 'develop',
-        variables: [{ key: 'NODE_ENV', value: 'staging' }],
-        domains: [
-          { id: 'd-shop-staging', host: 'staging.acme.dev', service: 'web', port: 3000, tls: 'auto', redirectWww: false }
-        ],
-        trigger: { kind: 'push', pattern: '' }
-      }
-    ],
-    createdAt: now,
-    updatedAt: now
-  },
-  {
-    id: 'p-metrics',
-    name: 'metrics',
-    description: 'Prometheus and Grafana, pinned to the manager node',
-    sourceKind: 'compose',
-    git: { provider: 'github', repo: '', branch: 'main', composePath: 'docker-compose.yml' },
-    compose: 'services:\n  prometheus:\n    image: prom/prometheus:latest\n    ports:\n      - "9090:9090"\n',
-    environments: [
-      {
-        ...blankEnvironment('production'),
-        id: 'e-metrics-prod',
-        variables: [{ key: 'RETENTION', value: '30d' }],
-        domains: [
-          { id: 'd-metrics', host: 'metrics.acme.dev', service: 'grafana', port: 3000, tls: 'auto', redirectWww: false }
-        ],
-        deploy: {
-          strategy: 'recreate',
-          replicas: 1,
-          placement: 'node.role==manager',
-          healthGraceSec: 15,
-          autoRollback: false,
-          alwaysPull: true
-        }
-      }
-    ],
-    createdAt: now,
-    updatedAt: now
-  }
-])
+export const runtimeStateLabel: Record<RuntimeState, string> = {
+  running: 'running',
+  degraded: 'degraded',
+  deploying: 'deploying',
+  stopped: 'stopped',
+  unknown: 'unknown'
+}
+
+const items = ref<Project[]>([])
+const statuses = ref<Record<string, ProjectStatus>>({})
+const pending = ref(false)
+const error = ref<string | null>(null)
+
+let inflight: Promise<void> | null = null
+let loaded = false
 
 export function useProjects() {
+  const api = useApi()
+
+  async function load(force = false) {
+    if (loaded && !force) return
+    if (inflight) return inflight
+
+    pending.value = true
+    error.value = null
+
+    inflight = api.get<Project[]>('/projects')
+      .then((list) => {
+        items.value = list ?? []
+        loaded = true
+      })
+      .catch((err: Error) => {
+        error.value = err.message
+      })
+      .finally(() => {
+        pending.value = false
+        inflight = null
+      })
+
+    return inflight
+  }
+
   const find = (id: string) => items.value.find(project => project.id === id) ?? null
 
-  function create(payload: ProjectPayload) {
-    const stamp = new Date().toISOString()
-    const project: Project = {
-      ...payload,
-      id: `p-${crypto.randomUUID().slice(0, 8)}`,
-      createdAt: stamp,
-      updatedAt: stamp
-    }
+  async function create(payload: ProjectPayload) {
+    const project = await api.post<Project>('/projects', payload)
     items.value = [project, ...items.value]
     return project
   }
 
-  function update(id: string, payload: ProjectPayload) {
-    const index = items.value.findIndex(project => project.id === id)
-    if (index === -1) throw new Error(`No project ${id}`)
+  async function update(id: string, payload: ProjectPayload) {
+    const project = await api.put<Project>(`/projects/${id}`, payload)
 
-    const project: Project = {
-      ...items.value[index]!,
-      ...payload,
-      updatedAt: new Date().toISOString()
-    }
-    items.value = items.value.toSpliced(index, 1, project)
+    const index = items.value.findIndex(item => item.id === id)
+    items.value = index === -1
+      ? [project, ...items.value]
+      : items.value.toSpliced(index, 1, project)
+
     return project
   }
 
-  function remove(id: string) {
-    items.value = items.value.filter(project => project.id !== id)
+  async function remove(id: string) {
+    await api.del(`/projects/${id}`)
+    items.value = items.value.filter(item => item.id !== id)
+
+    const { [id]: _removed, ...rest } = statuses.value
+    statuses.value = rest
   }
 
-  return { items, find, create, update, remove }
+  /* ---- live status ---- */
+
+  /**
+   * Reads every project's live state in one call. Failure is deliberately
+   * silent: a poll that could not run leaves the last reading on screen, which
+   * is better than blanking every card because one tick was missed. A server
+   * that is really gone shows up as the page's own error banner.
+   */
+  async function refreshStatus() {
+    try {
+      const list = await api.get<ProjectStatus[]>('/projects/status')
+      statuses.value = Object.fromEntries((list ?? []).map(status => [status.projectId, status]))
+    } catch {
+      // Leave the last reading in place.
+    }
+  }
+
+  /** The same for one project, which is what the detail page polls. */
+  async function refreshProjectStatus(id: string) {
+    try {
+      const status = await api.get<ProjectStatus>(`/projects/${id}/status`)
+      statuses.value = { ...statuses.value, [id]: status }
+      return status
+    } catch {
+      return statuses.value[id] ?? null
+    }
+  }
+
+  const statusOf = (id: string) => statuses.value[id] ?? null
+
+  /* ---- deploying ---- */
+
+  /**
+   * Starts a deployment and hands back the queued run.
+   *
+   * It returns as soon as the run exists rather than when it finishes — a build
+   * takes minutes — so the caller follows it through the run's logs and the
+   * environment's status.
+   */
+  const deploy = (projectId: string, environmentId: string, message = '') =>
+    api.post<Deployment>(`/projects/${projectId}/environments/${environmentId}/deploy`, { message })
+
+  /** Removes an environment's stack, leaving its configuration in place. */
+  const stop = (projectId: string, environmentId: string) =>
+    api.post(`/projects/${projectId}/environments/${environmentId}/stop`, {})
+
+  return {
+    items,
+    pending,
+    error,
+    load,
+    find,
+    create,
+    update,
+    remove,
+    statuses,
+    statusOf,
+    refreshStatus,
+    refreshProjectStatus,
+    deploy,
+    stop
+  }
 }

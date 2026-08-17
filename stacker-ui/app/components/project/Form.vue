@@ -7,6 +7,9 @@ import type { ProjectPayload } from '~/types/project'
  * first environment. Domains and rollout settings live on the project's own
  * tabs, so this page stays short.
  */
+/** `saving` disables both buttons while the request the page made is in flight. */
+defineProps<{ saving?: boolean }>()
+
 const emit = defineEmits<{
   /** `deploy` is true when the user pressed "Save and deploy" */
   submit: [payload: ProjectPayload, deploy: boolean]
@@ -186,13 +189,14 @@ function onSubmit(event: FormSubmitEvent<ProjectPayload>) {
     </section>
 
     <div class="flex flex-wrap items-center justify-end gap-2 border-t border-default pt-4">
-      <UButton label="Cancel" color="neutral" variant="ghost" @click="emit('cancel')" />
+      <UButton label="Cancel" color="neutral" variant="ghost" :disabled="saving" @click="emit('cancel')" />
       <UButton
         label="Save"
         type="submit"
         color="neutral"
         variant="subtle"
         icon="i-lucide-save"
+        :disabled="saving"
         @click="deployAfterSave = false"
       />
       <UButton
@@ -200,6 +204,7 @@ function onSubmit(event: FormSubmitEvent<ProjectPayload>) {
         type="submit"
         icon="i-lucide-rocket"
         class="shadow-lg shadow-primary/20"
+        :loading="saving"
         @click="deployAfterSave = true"
       />
     </div>

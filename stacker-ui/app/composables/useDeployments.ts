@@ -1,90 +1,15 @@
-import type { Deployment, DeploymentStatus } from '~/types/deployment'
+import type { Deployment, DeploymentStatus, LogChunk } from '~/types/deployment'
+import { isLive } from '~/types/deployment'
 
 /**
- * Deployments — placeholder only, same story as `useProjects`: a seeded
- * in-memory list, no server behind it.
+ * Deployments, backed by the stacker server (`/api/deployments`).
+ *
+ * The list is polled rather than pushed. A run's own progress is in its log,
+ * which is read with a cursor, so following one costs a short response per tick
+ * instead of the whole log every time.
  */
 
-const minutesAgo = (minutes: number) =>
-  new Date(Date.now() - minutes * 60_000).toISOString()
-
-const items = ref<Deployment[]>([
-  {
-    id: 'd-1',
-    number: 48,
-    projectId: 'p-storefront',
-    projectName: 'storefront',
-    environment: 'production',
-    status: 'running',
-    triggeredBy: 'tag',
-    actor: 'v1.8.0',
-    revision: '9f2c1ab',
-    message: 'Release 1.8.0',
-    startedAt: minutesAgo(2)
-  },
-  {
-    id: 'd-2',
-    number: 47,
-    projectId: 'p-storefront',
-    projectName: 'storefront',
-    environment: 'staging',
-    status: 'succeeded',
-    triggeredBy: 'push',
-    actor: 'adharsh',
-    revision: '3ba77de',
-    message: 'Cache product listings',
-    startedAt: minutesAgo(35),
-    finishedAt: minutesAgo(34),
-    durationSec: 74
-  },
-  {
-    id: 'd-3',
-    number: 12,
-    projectId: 'p-metrics',
-    projectName: 'metrics',
-    environment: 'production',
-    status: 'failed',
-    triggeredBy: 'manual',
-    actor: 'adharsh',
-    revision: 'compose',
-    message: 'Bump prometheus to v3',
-    startedAt: minutesAgo(180),
-    finishedAt: minutesAgo(179),
-    durationSec: 41
-  },
-  {
-    id: 'd-4',
-    number: 46,
-    projectId: 'p-storefront',
-    projectName: 'storefront',
-    environment: 'staging',
-    status: 'cancelled',
-    triggeredBy: 'push',
-    actor: 'adharsh',
-    revision: 'ce01f4a',
-    message: 'Try new base image',
-    startedAt: minutesAgo(420),
-    finishedAt: minutesAgo(419),
-    durationSec: 18
-  },
-  {
-    id: 'd-5',
-    number: 11,
-    projectId: 'p-metrics',
-    projectName: 'metrics',
-    environment: 'production',
-    status: 'succeeded',
-    triggeredBy: 'schedule',
-    actor: 'nightly',
-    revision: 'compose',
-    message: 'Nightly redeploy',
-    startedAt: minutesAgo(1500),
-    finishedAt: minutesAgo(1498),
-    durationSec: 96
-  }
-])
-
-/** Badge colour per status, shared by the list and the project page. */
+/** Badge colour per status, shared by the list and the project pages. */
 export const deploymentStatusColor: Record<DeploymentStatus, 'primary' | 'success' | 'error' | 'neutral' | 'warning'> = {
   queued: 'neutral',
   running: 'primary',
@@ -93,25 +18,75 @@ export const deploymentStatusColor: Record<DeploymentStatus, 'primary' | 'succes
   cancelled: 'warning'
 }
 
+const items = ref<Deployment[]>([])
+const pending = ref(false)
+const error = ref<string | null>(null)
+
+let inflight: Promise<void> | null = null
+let loaded = false
+
 export function useDeployments() {
-  /** Records a deployment for the "Save and deploy" flow so the list moves. */
-  function enqueue(projectId: string, projectName: string, environment: string) {
-    const deployment: Deployment = {
-      id: `d-${crypto.randomUUID().slice(0, 8)}`,
-      number: Math.max(0, ...items.value.map(item => item.number)) + 1,
-      projectId,
-      projectName,
-      environment,
-      status: 'queued',
-      triggeredBy: 'manual',
-      actor: 'you',
-      revision: 'pending',
-      message: 'Triggered from the project form',
-      startedAt: new Date().toISOString()
-    }
-    items.value = [deployment, ...items.value]
-    return deployment
+  const api = useApi()
+
+  async function load(force = false) {
+    if (loaded && !force) return
+    if (inflight) return inflight
+
+    pending.value = true
+    error.value = null
+
+    inflight = api.get<Deployment[]>('/deployments')
+      .then((list) => {
+        items.value = list ?? []
+        loaded = true
+      })
+      .catch((err: Error) => {
+        error.value = err.message
+      })
+      .finally(() => {
+        pending.value = false
+        inflight = null
+      })
+
+    return inflight
   }
 
-  return { items, enqueue }
+  /**
+   * Re-reads the list for the poll. Unlike `load` it never sets `pending` and
+   * never surfaces its failure: a refresh that fails must not replace a table
+   * the user is reading with a spinner or an error.
+   */
+  async function refresh() {
+    try {
+      items.value = await api.get<Deployment[]>('/deployments') ?? []
+      loaded = true
+    } catch {
+      // Leave the list as it stands.
+    }
+  }
+
+  /** True while some run is still moving — what the pollers key off. */
+  const hasLive = computed(() => items.value.some(item => isLive(item.status)))
+
+  const forProject = (projectId: string) =>
+    computed(() => items.value.filter(item => item.projectId === projectId))
+
+  /** Reads the lines after a cursor. See `LogChunk`. */
+  const logs = (id: string, after = 0) =>
+    api.get<LogChunk>(`/deployments/${id}/logs?after=${after}`)
+
+  async function cancel(id: string) {
+    await api.post(`/deployments/${id}/cancel`, {})
+    await refresh()
+  }
+
+  /** Records a run the caller just started, so the list moves without a poll. */
+  function track(deployment: Deployment) {
+    const index = items.value.findIndex(item => item.id === deployment.id)
+    items.value = index === -1
+      ? [deployment, ...items.value]
+      : items.value.toSpliced(index, 1, deployment)
+  }
+
+  return { items, pending, error, load, refresh, hasLive, forProject, logs, cancel, track }
 }

@@ -33,6 +33,90 @@ const providerItems = [
 ]
 
 const isGit = computed(() => props.draft.sourceKind === 'git')
+
+/* ---- repository picker ---- */
+
+/**
+ * The repository is chosen from the connected GitHub App's installation when
+ * there is one, and typed in when there is not.
+ *
+ * It stays a combobox rather than a plain select in either case: the field also
+ * accepts a clone URL for a provider stacker cannot enumerate, and a repository
+ * that was added to the installation since this list was fetched must not be
+ * unreachable until someone reloads the page.
+ */
+const github = useGitHub()
+
+onMounted(() => {
+  // Only GitHub can be enumerated, so nothing is fetched for other providers.
+  if (props.draft.git.provider === 'github') void github.load()
+})
+
+// Loaded lazily, so switching the provider to GitHub after mount still fills in.
+watch(() => props.draft.git.provider, (provider) => {
+  if (provider === 'github') void github.load()
+})
+
+const repositoryItems = computed(() => {
+  const items = github.repositories.value.map(repo => ({
+    label: repo.fullName,
+    value: repo.fullName,
+    icon: repo.private ? 'i-lucide-lock' : 'i-lucide-book-marked',
+    branch: repo.defaultBranch
+  }))
+
+  // A repository already on the project but absent from the list — renamed,
+  // removed from the installation, or another provider entirely — is added so
+  // the field shows what is actually configured instead of looking empty.
+  const current = props.draft.git.repo.trim()
+  if (current && !items.some(item => item.value === current)) {
+    items.unshift({ label: current, value: current, icon: 'i-lucide-git-branch', branch: '' })
+  }
+  return items
+})
+
+/** The picker is only worth showing once there is something to pick. */
+const canPickRepository = computed(() =>
+  props.draft.git.provider === 'github' && github.repositories.value.length > 0)
+
+/**
+ * GitHub is selected but nothing is connected. Worth saying so: a repository
+ * typed in by hand still deploys if it is public, and the reason a private one
+ * fails to clone is exactly this.
+ */
+const needsConnection = computed(() =>
+  props.draft.git.provider === 'github'
+  && !github.pending.value
+  && !github.app.value?.installationId)
+
+/**
+ * Picking a repository fills in its default branch, which is the point of
+ * reading the list — a repository still on `master` would otherwise fail its
+ * first clone against the `main` the form defaults to.
+ *
+ * An edited branch is left alone: the whole reason branch is a field is that a
+ * project may deploy something other than the default.
+ */
+function onRepositoryChange(value: string) {
+  const picked = repositoryItems.value.find(item => item.value === value)
+  if (!picked?.branch) return
+
+  const branch = props.draft.git.branch.trim()
+  if (branch === '' || branch === 'main' || branch === autofilledBranch) {
+    props.draft.git.branch = picked.branch
+    autofilledBranch = picked.branch
+  }
+}
+
+// Remembers what was filled in, so picking a second repository replaces a branch
+// this component chose but never one the user typed.
+let autofilledBranch = ''
+
+/** Free text typed into the combobox is accepted as-is. */
+function onRepositoryCreate(value: string) {
+  props.draft.git.repo = value.trim()
+  onRepositoryChange(props.draft.git.repo)
+}
 </script>
 
 <template>
@@ -70,8 +154,45 @@ const isGit = computed(() => props.draft.sourceKind === 'git')
         />
       </UFormField>
 
-      <UFormField label="Repository" name="git.repo" required>
-        <UInput v-model="draft.git.repo" placeholder="acme/storefront" class="w-full font-mono" />
+      <UFormField
+        label="Repository"
+        name="git.repo"
+        required
+        :help="canPickRepository
+          ? 'From your connected GitHub App. Type to search, or enter any clone URL.'
+          : undefined"
+      >
+        <USelectMenu
+          v-if="canPickRepository"
+          v-model="draft.git.repo"
+          :items="repositoryItems"
+          value-key="value"
+          create-item
+          icon="i-lucide-github"
+          placeholder="Select a repository"
+          class="w-full font-mono"
+          @update:model-value="onRepositoryChange"
+          @create="onRepositoryCreate"
+        />
+
+        <!-- No connection to read, so the field is what it always was. -->
+        <UInput
+          v-else
+          v-model="draft.git.repo"
+          placeholder="acme/storefront"
+          class="w-full font-mono"
+          :loading="github.pending.value && draft.git.provider === 'github'"
+        />
+
+        <template v-if="needsConnection" #help>
+          <span class="text-dimmed">
+            Public repositories work as typed.
+            <NuxtLink to="/dashboard/settings/git-provider" class="text-primary hover:underline">
+              Connect GitHub
+            </NuxtLink>
+            to pick from a list and deploy private ones.
+          </span>
+        </template>
       </UFormField>
 
       <UFormField label="Branch" name="git.branch" required hint="Default for all environments">

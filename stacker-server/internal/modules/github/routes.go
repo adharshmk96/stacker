@@ -7,11 +7,17 @@ import (
 	"gorm.io/gorm"
 )
 
-type Module struct{ handler *Handler }
+// Module bundles the GitHub routes. Service is exported because other modules
+// consume it directly — the project module mints a clone token through it, the
+// same way node consumes the ssh key service.
+type Module struct {
+	Service *Service
+	handler *Handler
+}
 
 func New(db *gorm.DB, log *slog.Logger) *Module {
 	service := NewService(NewRepositoryStore(db), log.With("module", "github"))
-	return &Module{handler: NewHandler(service)}
+	return &Module{Service: service, handler: NewHandler(service)}
 }
 
 func (m *Module) RegisterPublicRoutes(api *gin.RouterGroup) {
