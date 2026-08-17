@@ -27,6 +27,11 @@ tasks:
       - docker build --target server -t stacker:test .
       - docker run --rm stacker:test go test ./...
 
+  test:cov:
+    desc: Run tests with coverage and print a summary (--html for the annotated source)
+    cmds:
+      - ./scripts/test-coverage.sh {{.CLI_ARGS}}
+
   deploy:test:
     desc: Install the current working tree on a test server
     # The steps live in the script rather than here: task runs commands through

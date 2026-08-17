@@ -4,3 +4,6 @@ bin/
 # .gitkeep stays so the //go:embed in internal/web still compiles on a clone.
 internal/web/dist/*
 !internal/web/dist/.gitkeep
+
+# Coverage profile from scripts/test-coverage.sh.
+coverage.out

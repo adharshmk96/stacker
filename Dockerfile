@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
   -o /out/stacker .
 
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates docker-cli openssh-client sshpass tzdata
+RUN apk add --no-cache ca-certificates docker-cli git openssh-client sshpass tzdata
 COPY --from=server /out/stacker /usr/local/bin/stacker
 RUN mkdir -p /data
 VOLUME ["/data"]
