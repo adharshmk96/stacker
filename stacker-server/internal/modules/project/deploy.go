@@ -135,7 +135,7 @@ func (e *engine) Start(item Project, env Environment, req DeployRequest) (Deploy
 
 	go func() {
 		defer cancel()
-		e.work(ctx, state, deployment, item, env)
+		e.work(ctx, state, deployment, item, env, strings.TrimSpace(req.Ref))
 	}()
 
 	return deployment, nil
@@ -228,7 +228,7 @@ func (e *engine) Teardown(ctx context.Context, envID, stack string) error {
 // work is the whole deploy, start to finish. Every step logs what it is about to
 // do before doing it, so a run that fails halfway reads as a story rather than
 // as a stack trace.
-func (e *engine) work(ctx context.Context, state *run, deployment Deployment, item Project, env Environment) {
+func (e *engine) work(ctx context.Context, state *run, deployment Deployment, item Project, env Environment, ref string) {
 	e.setStatus(state, StatusRunning)
 	deployment.Status = StatusRunning
 	if err := e.repo.SaveDeployment(&deployment); err != nil {
@@ -236,7 +236,7 @@ func (e *engine) work(ctx context.Context, state *run, deployment Deployment, it
 	}
 
 	workspace := filepath.Join(e.workRoot, deployment.ID)
-	revision, err := e.steps(ctx, state, &deployment, item, env, workspace)
+	revision, err := e.steps(ctx, state, &deployment, item, env, workspace, ref)
 
 	// Cleanup runs whatever happened: a failed run's workspace is no more
 	// useful than a successful one's, and the log already holds everything the
@@ -259,6 +259,7 @@ func (e *engine) steps(
 	item Project,
 	env Environment,
 	workspace string,
+	ref string,
 ) (string, error) {
 	stack := deployment.Stack
 	e.emit(state, fmt.Sprintf("==> deploying %s · %s as stack %s", item.Name, env.Name, stack))
@@ -268,7 +269,7 @@ func (e *engine) steps(
 	}
 
 	// 1. Get the compose file, and where it sits on disk.
-	revision, basePath, content, err := e.source(ctx, state, item, env, workspace)
+	revision, basePath, content, err := e.source(ctx, state, item, env, workspace, ref)
 	if err != nil {
 		return revision, err
 	}
@@ -408,6 +409,8 @@ func (e *engine) source(
 	item Project,
 	env Environment,
 	workspace string,
+	// ref is the tag a tag-triggered run deploys; blank clones the branch.
+	ref string,
 ) (revision, path, content string, err error) {
 	if item.SourceKind == SourceCompose {
 		e.emit(state, "==> using the project's stored compose file")
@@ -421,16 +424,18 @@ func (e *engine) source(
 		return "compose", path, item.Compose, nil
 	}
 
-	branch := strings.TrimSpace(env.Branch)
-	if branch == "" {
-		branch = strings.TrimSpace(item.Git.Branch)
+	// `git clone --branch` takes a tag as happily as a branch, so a tag deploy
+	// is the same shallow clone pointed at a different name.
+	target := effectiveBranch(item, env)
+	if ref != "" {
+		target = strings.TrimPrefix(ref, "refs/tags/")
 	}
 
 	url, display, err := e.cloneURL(ctx, item, state)
 	if err != nil {
 		return "", "", "", err
 	}
-	e.emit(state, fmt.Sprintf("==> cloning %s at %s", display, branch))
+	e.emit(state, fmt.Sprintf("==> cloning %s at %s", display, target))
 
 	checkout := filepath.Join(workspace, "repo")
 	// A shallow single-branch clone: a deploy needs one tree, not the history,
@@ -438,7 +443,7 @@ func (e *engine) source(
 	// minutes.
 	clone := Command{
 		Name: "git",
-		Args: []string{"clone", "--depth", "1", "--single-branch", "--branch", branch, url, checkout},
+		Args: []string{"clone", "--depth", "1", "--single-branch", "--branch", target, url, checkout},
 		Dir:  workspace,
 		// GIT_TERMINAL_PROMPT=0 turns a missing credential into an error
 		// instead of a process waiting forever for a password nobody will type.

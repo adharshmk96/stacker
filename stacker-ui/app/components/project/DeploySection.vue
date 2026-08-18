@@ -22,7 +22,7 @@ const triggerItems = computed(() => [
     description: 'Pushes of a tag matching a pattern',
     disabled: !props.isGit
   },
-  { label: 'On a schedule', value: 'schedule', description: 'A cron expression' }
+  { label: 'On a schedule', value: 'schedule', description: 'A cron expression, in UTC' }
 ])
 
 const isSchedule = computed(() => props.environment.trigger.kind === 'schedule')
@@ -62,6 +62,9 @@ const strategyItems = [
       <UFormField
         v-if="environment.trigger.kind === 'tag' || isSchedule"
         :label="isSchedule ? 'Cron expression' : 'Tag pattern'"
+        :help="isSchedule
+          ? 'Five fields — minute, hour, day of month, month, day of week — in UTC. Ranges, lists and */n are supported.'
+          : 'A glob matched against the pushed tag. Blank matches every tag.'"
         class="mt-3"
       >
         <UInput

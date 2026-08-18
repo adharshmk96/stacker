@@ -1744,3 +1744,104 @@ func TestHandlePushUsesEnvironmentBranchAndSkipsManual(t *testing.T) {
 		return err == nil && stored.Status.Done()
 	})
 }
+
+func TestHandleTagMatchesPattern(t *testing.T) {
+	service, _ := testService(t, Options{})
+	req := writeRequest()
+	req.SourceKind = SourceGit
+	req.Compose = ""
+	req.Git = GitSource{Repo: "https://github.com/acme/store.git", Branch: "main", ComposePath: "docker-compose.yml"}
+	req.Environments = []EnvironmentRequest{
+		{Name: "production", Trigger: DeployTrigger{Kind: TriggerTag, Pattern: "v*"}, Deploy: DeploySettings{Replicas: 1}},
+		{Name: "staging", Trigger: DeployTrigger{Kind: TriggerPush}, Deploy: DeploySettings{Replicas: 1}},
+	}
+	if _, err := service.Create(req); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ignored, err := service.HandleTag("acme/store", "nightly-2026-08-18", "ada", "abc123", "ignored")
+	if err != nil || len(ignored) != 0 {
+		t.Fatalf("pattern mismatch = (%d, %v), want no deployments", len(ignored), err)
+	}
+
+	queued, err := service.HandleTag("acme/store", "v1.2.0", "ada", "abc123", "release")
+	if err != nil {
+		t.Fatalf("handle tag: %v", err)
+	}
+	// The push environment must stay out of it: a tag is not a branch push.
+	if len(queued) != 1 || queued[0].Environment != "production" || queued[0].TriggeredBy != TriggerTag {
+		t.Fatalf("deployments = %+v", queued)
+	}
+	waitFor(t, "the tag deployment to finish", func() bool {
+		stored, err := service.Deployment(queued[0].ID)
+		return err == nil && stored.Status.Done()
+	})
+}
+
+func TestCleanTriggerValidatesPatternsAndSource(t *testing.T) {
+	cases := []struct {
+		name    string
+		trigger DeployTrigger
+		source  SourceKind
+		want    DeployTrigger
+		wantErr error
+	}{
+		{
+			name:    "a tag trigger with no pattern takes every tag",
+			trigger: DeployTrigger{Kind: TriggerTag},
+			source:  SourceGit,
+			want:    DeployTrigger{Kind: TriggerTag, Pattern: "*"},
+		},
+		{
+			name:    "a broken glob is refused",
+			trigger: DeployTrigger{Kind: TriggerTag, Pattern: "v[1"},
+			source:  SourceGit,
+			wantErr: ErrTagPattern,
+		},
+		{
+			name:    "a tag trigger needs a repository to watch",
+			trigger: DeployTrigger{Kind: TriggerTag, Pattern: "v*"},
+			source:  SourceCompose,
+			wantErr: ErrTriggerSource,
+		},
+		{
+			name:    "a schedule is kept with its cron expression",
+			trigger: DeployTrigger{Kind: TriggerSchedule, Pattern: " 0 3 * * * "},
+			source:  SourceCompose,
+			want:    DeployTrigger{Kind: TriggerSchedule, Pattern: "0 3 * * *"},
+		},
+		{
+			name:    "a cron expression that can never fire is refused",
+			trigger: DeployTrigger{Kind: TriggerSchedule, Pattern: "every night"},
+			source:  SourceGit,
+			wantErr: ErrCronExpression,
+		},
+		{
+			name:    "an unknown kind falls back to manual and drops the pattern",
+			trigger: DeployTrigger{Kind: "whenever", Pattern: "v*"},
+			source:  SourceGit,
+			want:    DeployTrigger{Kind: TriggerManual},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := cleanTrigger(tc.trigger, tc.source)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tc.wantErr)
+				}
+				if !errIsValidation(err) {
+					t.Error("the error should be reported to the user as a 400")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("clean: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("trigger = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}

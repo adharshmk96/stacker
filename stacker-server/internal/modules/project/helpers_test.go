@@ -60,9 +60,11 @@ func TestParseReplicasGarbage(t *testing.T) {
 	}
 }
 
-func TestRenderRoutesCustomTLS(t *testing.T) {
+func TestRenderRoutesUnknownTLSFallsBackToAuto(t *testing.T) {
+	// "custom" is a retired mode: rows stored before it was removed must keep
+	// serving https rather than silently dropping to plain http.
 	out, err := renderRoutes("stk-shop-production", []Domain{
-		{Host: "shop.acme.dev", Service: "web", Port: 443, TLS: TLSCustom},
+		{Host: "shop.acme.dev", Service: "web", Port: 443, TLS: TLSMode("custom")},
 	})
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -74,11 +76,8 @@ func TestRenderRoutesCustomTLS(t *testing.T) {
 	}
 
 	router := doc.HTTP.Routers["stk-shop-production-0"]
-	if router.TLS == nil {
-		t.Fatal("custom TLS should still have a tls block")
-	}
-	if router.TLS.CertResolver != "" {
-		t.Errorf("certResolver = %q, want empty so Traefik uses a loaded cert", router.TLS.CertResolver)
+	if router.TLS == nil || router.TLS.CertResolver == "" {
+		t.Fatal("a retired TLS mode should be served with the ACME resolver")
 	}
 	if got := strings.Join(router.EntryPoints, ","); got != "websecure" {
 		t.Errorf("entrypoints = %q, want websecure", got)

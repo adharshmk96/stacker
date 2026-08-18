@@ -139,15 +139,34 @@ func TestWebhookDispatchesVerifiedBranchPush(t *testing.T) {
 	}
 }
 
-func TestWebhookIgnoresNonBranchPushes(t *testing.T) {
+func TestWebhookDispatchesTagPushes(t *testing.T) {
+	mod := testModule(t)
+	app := seedApp(t, mod.Service, App{WebhookSecret: "hook-secret"})
+	var got PushEvent
+	mod.SetPushHandler(func(_ context.Context, event PushEvent) error { got = event; return nil })
+
+	body := []byte(`{"ref":"refs/tags/v1.0.0","after":"abc123","repository":{"full_name":"acme/app"},` +
+		`"sender":{"login":"octocat"},"head_commit":{"message":"release"}}`)
+	if rec := signedWebhook(t, testRouter(mod), app.WebhookSecret, "push", body); rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	want := PushEvent{Repository: "acme/app", Tag: "v1.0.0", Actor: "octocat", Revision: "abc123", Message: "release"}
+	if got != want {
+		t.Fatalf("event = %+v, want %+v", got, want)
+	}
+}
+
+func TestWebhookIgnoresDeletionsAndOtherRefs(t *testing.T) {
 	mod := testModule(t)
 	app := seedApp(t, mod.Service, App{WebhookSecret: "hook-secret"})
 	calls := 0
 	mod.SetPushHandler(func(_ context.Context, _ PushEvent) error { calls++; return nil })
 
 	for _, body := range [][]byte{
-		[]byte(`{"ref":"refs/tags/v1.0.0","repository":{"full_name":"acme/app"}}`),
+		[]byte(`{"ref":"refs/pull/7/head","repository":{"full_name":"acme/app"}}`),
 		[]byte(`{"ref":"refs/heads/main","deleted":true,"repository":{"full_name":"acme/app"}}`),
+		[]byte(`{"ref":"refs/tags/v1.0.0","deleted":true,"repository":{"full_name":"acme/app"}}`),
 	} {
 		if rec := signedWebhook(t, testRouter(mod), app.WebhookSecret, "push", body); rec.Code != http.StatusNoContent {
 			t.Fatalf("status = %d", rec.Code)

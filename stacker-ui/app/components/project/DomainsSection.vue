@@ -6,7 +6,6 @@ const props = defineProps<{ environment: Environment }>()
 
 const tlsItems = [
   { label: 'Let\'s Encrypt', value: 'auto' },
-  { label: 'Custom certificate', value: 'custom' },
   { label: 'No TLS', value: 'none' }
 ]
 

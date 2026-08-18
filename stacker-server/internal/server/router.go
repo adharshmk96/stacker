@@ -75,10 +75,20 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 		Network:            cfg.StackName + "_proxy",
 		Token:              githubModule.Service.CloneToken,
 	}, log)
-	githubModule.SetPushHandler(func(ctx context.Context, event githubprovider.PushEvent) error {
+	// One webhook carries both: the ref decided which of the two it was.
+	githubModule.SetPushHandler(func(_ context.Context, event githubprovider.PushEvent) error {
+		if event.Tag != "" {
+			_, err := projectModule.Service.HandleTag(event.Repository, event.Tag, event.Actor, event.Revision, event.Message)
+			return err
+		}
 		_, err := projectModule.Service.HandlePush(event.Repository, event.Branch, event.Actor, event.Revision, event.Message)
 		return err
 	})
+	// Scheduled environments are checked once a minute for the life of the
+	// process; shutdown takes the whole process with it, so there is nothing
+	// to cancel here.
+	go projectModule.Service.RunScheduler(context.Background())
+
 	// Runs live in the process that started them, so a row still marked running
 	// belongs to a process that is gone. Closing those out is startup work.
 	if err := projectModule.Service.Recover(); err != nil {

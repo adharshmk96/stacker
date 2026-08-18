@@ -37,14 +37,12 @@ const (
 )
 
 // TLSMode is how a domain is served. `auto` asks Traefik's ACME resolver for a
-// certificate; `custom` expects one already loaded on the proxy; `none` serves
-// plain http.
+// certificate; `none` serves plain http.
 type TLSMode string
 
 const (
-	TLSAuto   TLSMode = "auto"
-	TLSCustom TLSMode = "custom"
-	TLSNone   TLSMode = "none"
+	TLSAuto TLSMode = "auto"
+	TLSNone TLSMode = "none"
 )
 
 // GitSource is the repository half of a project. It is stored as one JSON
@@ -309,6 +307,9 @@ type DeployRequest struct {
 	Actor       string      `json:"actor" binding:"max=200"`
 	TriggeredBy TriggerKind `json:"-"`
 	Revision    string      `json:"-"`
+	// Ref is the git ref to check out instead of the environment's branch —
+	// `refs/tags/v1.2.0` for a tag deploy. Blank means the branch.
+	Ref string `json:"-"`
 }
 
 // LogChunk is a slice of a run's output, read with a cursor so the browser can

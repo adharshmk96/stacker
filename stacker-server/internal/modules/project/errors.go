@@ -20,6 +20,9 @@ var (
 	ErrDomainPort      = errors.New("a domain port must be between 1 and 65535")
 	ErrDomainTaken     = errors.New("that hostname is already routed by another environment")
 	ErrReplicas        = errors.New("replicas must be between 1 and 100")
+	ErrTagPattern      = errors.New("enter a tag pattern, such as v* or v1.*")
+	ErrCronExpression  = errors.New("enter a cron expression, such as 0 3 * * *")
+	ErrTriggerSource   = errors.New("push and tag triggers need a git source")
 
 	// ErrAlreadyDeploying guards the one-run-per-environment rule: two stack
 	// deploys of the same stack would race each other's rollout.

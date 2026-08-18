@@ -54,11 +54,10 @@ export interface Domain {
   /** Container port Traefik forwards to */
   port: number
   /**
-   * `auto`   — certificate issued by Let's Encrypt
-   * `custom` — a certificate already loaded on the proxy
-   * `none`   — plain http, for internal hosts
+   * `auto` — certificate issued by Let's Encrypt
+   * `none` — plain http, for internal hosts
    */
-  tls: 'auto' | 'custom' | 'none'
+  tls: 'auto' | 'none'
   /** Send `www.host` to `host` */
   redirectWww: boolean
 }

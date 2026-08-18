@@ -44,8 +44,6 @@ type routesRouter struct {
 	TLS         *routesTLS `yaml:"tls,omitempty"`
 }
 
-// routesTLS with no resolver is a valid Traefik block: it means "serve TLS with
-// whatever certificate is already loaded", which is what `custom` asks for.
 type routesTLS struct {
 	CertResolver string `yaml:"certResolver,omitempty"`
 }
@@ -175,17 +173,14 @@ func renderRoutes(stack string, domains []Domain) (string, error) {
 			Service:     key,
 			Middlewares: middlewares,
 		}
-		switch domain.TLS {
-		case TLSAuto:
-			router.TLS = &routesTLS{CertResolver: certResolver}
-		case TLSCustom:
-			router.TLS = &routesTLS{}
-		default:
+		if domain.TLS == TLSNone {
 			// Plain http. The installed static config redirects the `web`
 			// entrypoint to `websecure`, so a `none` domain is only reachable
 			// over http if that redirect has been turned off — which is the
 			// operator's call, not something a project should rewrite.
 			router.EntryPoints = []string{"web"}
+		} else {
+			router.TLS = &routesTLS{CertResolver: certResolver}
 		}
 		doc.HTTP.Routers[key] = router
 

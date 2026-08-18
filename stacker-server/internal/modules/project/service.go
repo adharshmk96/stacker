@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -272,7 +273,7 @@ func (s *Service) build(base Project, req WriteRequest, previous []Environment) 
 	seen := map[string]bool{}
 	item.Environments = make([]Environment, 0, len(req.Environments))
 	for position, envReq := range req.Environments {
-		env, err := s.buildEnvironment(item.ID, position, envReq, stored)
+		env, err := s.buildEnvironment(item.ID, item.SourceKind, position, envReq, stored)
 		if err != nil {
 			return Project{}, err
 		}
@@ -288,6 +289,7 @@ func (s *Service) build(base Project, req WriteRequest, previous []Environment) 
 
 func (s *Service) buildEnvironment(
 	projectID string,
+	source SourceKind,
 	position int,
 	req EnvironmentRequest,
 	stored map[string]Environment,
@@ -311,7 +313,11 @@ func (s *Service) buildEnvironment(
 	env.Position = position
 	env.Variables = cleanVars(req.Variables)
 	env.Secrets = mergeSecrets(cleanVars(req.Secrets), env.Secrets)
-	env.Trigger = cleanTrigger(req.Trigger)
+	trigger, err := cleanTrigger(req.Trigger, source)
+	if err != nil {
+		return Environment{}, err
+	}
+	env.Trigger = trigger
 
 	deploy, err := cleanDeploy(req.Deploy)
 	if err != nil {
@@ -376,9 +382,60 @@ func (s *Service) Deploy(id, envID string, req DeployRequest) (Deployment, error
 // HandlePush queues every push-enabled environment whose GitHub repository and
 // effective branch match the verified webhook event.
 func (s *Service) HandlePush(repository, branch, actor, revision, message string) ([]Deployment, error) {
-	repository = canonicalGitHubRepo(repository)
 	branch = strings.TrimSpace(branch)
-	if repository == "" || branch == "" {
+	if branch == "" {
+		return nil, nil
+	}
+
+	return s.handleWebhook(repository, func(item Project, env Environment) (bool, string) {
+		if env.Trigger.Kind != TriggerPush {
+			return false, ""
+		}
+		return effectiveBranch(item, env) == branch, ""
+	}, TriggerPush, actor, revision, message)
+}
+
+// HandleTag queues every tag-enabled environment of the repository whose
+// pattern matches the tag that was pushed.
+//
+// Unlike a push, the branch is irrelevant: the tag names the exact commit to
+// deploy, and it is passed to the run as the ref to clone.
+func (s *Service) HandleTag(repository, tag, actor, revision, message string) ([]Deployment, error) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil, nil
+	}
+
+	return s.handleWebhook(repository, func(_ Project, env Environment) (bool, string) {
+		if env.Trigger.Kind != TriggerTag {
+			return false, ""
+		}
+		pattern := env.Trigger.Pattern
+		if pattern == "" {
+			pattern = "*"
+		}
+		// The pattern was validated on save, so a bad one here can only be a
+		// row that predates the rule; it simply matches nothing.
+		matched, err := path.Match(pattern, tag)
+		if err != nil || !matched {
+			return false, ""
+		}
+		return true, "refs/tags/" + tag
+	}, TriggerTag, actor, revision, message)
+}
+
+// handleWebhook is the half a push and a tag share: find the repository's
+// projects, ask `wants` about each environment, and start the ones that say
+// yes. `wants` returns the git ref the run should check out, blank for the
+// environment's own branch.
+func (s *Service) handleWebhook(
+	repository string,
+	wants func(Project, Environment) (bool, string),
+	kind TriggerKind,
+	actor, revision, message string,
+) ([]Deployment, error) {
+	repository = canonicalGitHubRepo(repository)
+	if repository == "" {
 		return nil, nil
 	}
 
@@ -393,16 +450,13 @@ func (s *Service) HandlePush(repository, branch, actor, revision, message string
 			continue
 		}
 		for _, env := range item.Environments {
-			effectiveBranch := strings.TrimSpace(env.Branch)
-			if effectiveBranch == "" {
-				effectiveBranch = strings.TrimSpace(item.Git.Branch)
-			}
-			if env.Trigger.Kind != TriggerPush || effectiveBranch != branch {
+			match, ref := wants(item, env)
+			if !match {
 				continue
 			}
 
 			deployment, deployErr := s.engine.Start(item, env, DeployRequest{
-				Actor: actor, Message: message, TriggeredBy: TriggerPush, Revision: revision,
+				Actor: actor, Message: message, TriggeredBy: kind, Revision: revision, Ref: ref,
 			})
 			if errors.Is(deployErr, ErrAlreadyDeploying) {
 				continue
@@ -414,6 +468,14 @@ func (s *Service) HandlePush(repository, branch, actor, revision, message string
 		}
 	}
 	return queued, nil
+}
+
+// effectiveBranch is the environment's branch override, or the project's.
+func effectiveBranch(item Project, env Environment) string {
+	if branch := strings.TrimSpace(env.Branch); branch != "" {
+		return branch
+	}
+	return strings.TrimSpace(item.Git.Branch)
 }
 
 func canonicalGitHubRepo(value string) string {
@@ -562,14 +624,45 @@ func mergeSecrets(incoming, stored []EnvVar) []EnvVar {
 	return out
 }
 
-func cleanTrigger(trigger DeployTrigger) DeployTrigger {
+// cleanTrigger validates the trigger against the source it will run from. The
+// pattern is checked here rather than at deploy time so a schedule that can
+// never fire is refused while the user is still looking at the form.
+func cleanTrigger(trigger DeployTrigger, source SourceKind) (DeployTrigger, error) {
+	trigger.Pattern = strings.TrimSpace(trigger.Pattern)
+
 	switch trigger.Kind {
-	case TriggerPush, TriggerTag, TriggerSchedule:
+	case TriggerPush, TriggerTag:
+		// Both are webhook-driven, and there is no webhook for a compose file
+		// pasted into stacker.
+		if source != SourceGit {
+			return DeployTrigger{}, ErrTriggerSource
+		}
+	case TriggerSchedule:
 	default:
 		trigger.Kind = TriggerManual
 	}
-	trigger.Pattern = strings.TrimSpace(trigger.Pattern)
-	return trigger
+
+	switch trigger.Kind {
+	case TriggerTag:
+		if trigger.Pattern == "" {
+			// Every tag, which is the useful default for a repository that
+			// only tags releases.
+			trigger.Pattern = "*"
+		}
+		if _, err := path.Match(trigger.Pattern, "v1.0.0"); err != nil {
+			return DeployTrigger{}, fmt.Errorf("%w: %s", ErrTagPattern, trigger.Pattern)
+		}
+	case TriggerSchedule:
+		if _, err := parseCron(trigger.Pattern); err != nil {
+			return DeployTrigger{}, err
+		}
+	default:
+		// A pattern means nothing to a manual or push trigger, and keeping a
+		// stale one would resurface it if the kind were switched back.
+		trigger.Pattern = ""
+	}
+
+	return trigger, nil
 }
 
 // cleanDeploy fills in the defaults a payload may leave at zero, so a request
@@ -619,11 +712,12 @@ func cleanDomains(list []DomainRequest) ([]Domain, error) {
 			return nil, ErrDomainPort
 		}
 
-		tls := req.TLS
-		switch tls {
-		case TLSAuto, TLSCustom, TLSNone:
-		default:
-			tls = TLSAuto
+		// Anything that is not an explicit opt-out of TLS is served with an
+		// issued certificate, which also folds the retired `custom` mode of
+		// stored domains back onto `auto`.
+		tls := TLSAuto
+		if req.TLS == TLSNone {
+			tls = TLSNone
 		}
 
 		id := strings.TrimSpace(req.ID)
@@ -659,6 +753,7 @@ func errIsValidation(err error) bool {
 		ErrInvalidName, ErrInvalidSource, ErrRepoRequired, ErrBranchRequired,
 		ErrComposePath, ErrComposeRequired, ErrEnvRequired, ErrEnvName,
 		ErrDomainHost, ErrDomainService, ErrDomainPort, ErrReplicas,
+		ErrTagPattern, ErrCronExpression, ErrTriggerSource,
 		ErrComposeInvalid, ErrNoServices, ErrUnknownService,
 	} {
 		if errors.Is(err, candidate) {

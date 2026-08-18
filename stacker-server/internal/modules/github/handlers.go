@@ -17,9 +17,12 @@ import (
 
 type PushHandler func(context.Context, PushEvent) error
 
+// PushEvent is a verified push. Exactly one of Branch and Tag is set: GitHub
+// delivers both under the `push` event, and only the ref tells them apart.
 type PushEvent struct {
 	Repository string
 	Branch     string
+	Tag        string
 	Actor      string
 	Revision   string
 	Message    string
@@ -147,21 +150,31 @@ func (h *Handler) webhook(c *gin.Context) {
 		c.Status(http.StatusBadRequest)
 		return
 	}
-	if payload.Deleted || !strings.HasPrefix(payload.Ref, "refs/heads/") {
+	// A deletion carries the ref of what is gone, and there is nothing to
+	// deploy from a branch or tag that no longer exists.
+	if payload.Deleted {
 		c.Status(http.StatusNoContent)
 		return
 	}
-	actor := payload.Sender.Login
-	if actor == "" {
-		actor = payload.Pusher.Name
-	}
-	if err := h.handlePush(c.Request.Context(), PushEvent{
+	event := PushEvent{
 		Repository: payload.Repository.FullName,
-		Branch:     strings.TrimPrefix(payload.Ref, "refs/heads/"),
-		Actor:      actor,
+		Actor:      payload.Sender.Login,
 		Revision:   payload.After,
 		Message:    payload.HeadCommit.Message,
-	}); err != nil {
+	}
+	switch {
+	case strings.HasPrefix(payload.Ref, "refs/heads/"):
+		event.Branch = strings.TrimPrefix(payload.Ref, "refs/heads/")
+	case strings.HasPrefix(payload.Ref, "refs/tags/"):
+		event.Tag = strings.TrimPrefix(payload.Ref, "refs/tags/")
+	default:
+		c.Status(http.StatusNoContent)
+		return
+	}
+	if event.Actor == "" {
+		event.Actor = payload.Pusher.Name
+	}
+	if err := h.handlePush(c.Request.Context(), event); err != nil {
 		_ = c.Error(err)
 		c.Status(http.StatusInternalServerError)
 		return
