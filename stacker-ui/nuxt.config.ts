@@ -8,6 +8,12 @@ export default defineNuxtConfig({
   // so there is no Node server at runtime to render on.
   ssr: false,
 
+  app: {
+    head: {
+      link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }]
+    }
+  },
+
   runtimeConfig: {
     public: {
       // Same origin: in production the Go server serves both the UI and /api.
