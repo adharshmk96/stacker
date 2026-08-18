@@ -17,9 +17,7 @@ const (
 // credentials stacker can supply (see the github module).
 type GitProvider string
 
-// TriggerKind is what starts a deployment. Only `manual` runs today — the
-// others are stored so the setting survives, and so the UI can show what a
-// project is configured for.
+// TriggerKind is what starts a deployment.
 type TriggerKind string
 
 const (
@@ -307,8 +305,10 @@ type WriteRequest struct {
 // DeployRequest is the payload for a manual deploy. Both fields are optional —
 // the button sends neither.
 type DeployRequest struct {
-	Message string `json:"message" binding:"max=500"`
-	Actor   string `json:"actor" binding:"max=200"`
+	Message     string      `json:"message" binding:"max=500"`
+	Actor       string      `json:"actor" binding:"max=200"`
+	TriggeredBy TriggerKind `json:"-"`
+	Revision    string      `json:"-"`
 }
 
 // LogChunk is a slice of a run's output, read with a cursor so the browser can

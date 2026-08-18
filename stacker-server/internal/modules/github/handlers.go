@@ -1,20 +1,38 @@
 package github
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{ service *Service }
+type PushHandler func(context.Context, PushEvent) error
+
+type PushEvent struct {
+	Repository string
+	Branch     string
+	Actor      string
+	Revision   string
+	Message    string
+}
+
+type Handler struct {
+	service    *Service
+	handlePush PushHandler
+}
 
 func NewHandler(service *Service) *Handler { return &Handler{service: service} }
+
+func (h *Handler) SetPushHandler(handler PushHandler) { h.handlePush = handler }
 
 func (h *Handler) current(c *gin.Context) {
 	app, err := h.service.Current()
@@ -101,6 +119,51 @@ func (h *Handler) webhook(c *gin.Context) {
 	provided, err := hex.DecodeString(trimSHA256(signature))
 	if err != nil || !hmac.Equal(provided, want.Sum(nil)) {
 		c.Status(http.StatusUnauthorized)
+		return
+	}
+	if c.GetHeader("X-GitHub-Event") != "push" || h.handlePush == nil {
+		c.Status(http.StatusNoContent)
+		return
+	}
+
+	var payload struct {
+		Ref        string `json:"ref"`
+		Deleted    bool   `json:"deleted"`
+		After      string `json:"after"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+		Pusher struct {
+			Name string `json:"name"`
+		} `json:"pusher"`
+		Sender struct {
+			Login string `json:"login"`
+		} `json:"sender"`
+		HeadCommit struct {
+			Message string `json:"message"`
+		} `json:"head_commit"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	if payload.Deleted || !strings.HasPrefix(payload.Ref, "refs/heads/") {
+		c.Status(http.StatusNoContent)
+		return
+	}
+	actor := payload.Sender.Login
+	if actor == "" {
+		actor = payload.Pusher.Name
+	}
+	if err := h.handlePush(c.Request.Context(), PushEvent{
+		Repository: payload.Repository.FullName,
+		Branch:     strings.TrimPrefix(payload.Ref, "refs/heads/"),
+		Actor:      actor,
+		Revision:   payload.After,
+		Message:    payload.HeadCommit.Message,
+	}); err != nil {
+		_ = c.Error(err)
+		c.Status(http.StatusInternalServerError)
 		return
 	}
 	c.Status(http.StatusNoContent)

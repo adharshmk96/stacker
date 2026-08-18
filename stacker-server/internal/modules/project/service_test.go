@@ -1682,3 +1682,65 @@ func TestEnvMapSecretsWinAKeyCollision(t *testing.T) {
 		t.Error("a blank key leaked into the environment")
 	}
 }
+
+func TestHandlePushMatchesRepositoryAndEffectiveBranch(t *testing.T) {
+	service, _ := testService(t, Options{})
+	req := writeRequest()
+	req.SourceKind = SourceGit
+	req.Compose = ""
+	req.Git = GitSource{Repo: "https://github.com/Acme/Store.git", Branch: "main", ComposePath: "docker-compose.yml"}
+	req.Environments[0].Trigger = DeployTrigger{Kind: TriggerPush}
+	item, err := service.Create(req)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	ignored, err := service.HandlePush("acme/other", "main", "ada", "abc123", "ignored")
+	if err != nil || len(ignored) != 0 {
+		t.Fatalf("repository mismatch = (%d, %v), want no deployments", len(ignored), err)
+	}
+	ignored, err = service.HandlePush("acme/store", "feature", "ada", "abc123", "ignored")
+	if err != nil || len(ignored) != 0 {
+		t.Fatalf("branch mismatch = (%d, %v), want no deployments", len(ignored), err)
+	}
+
+	queued, err := service.HandlePush("acme/store", "main", "ada", "abc123", "ship it")
+	if err != nil {
+		t.Fatalf("handle push: %v", err)
+	}
+	if len(queued) != 1 {
+		t.Fatalf("deployments = %d, want 1", len(queued))
+	}
+	deployment := queued[0]
+	if deployment.ProjectID != item.ID || deployment.TriggeredBy != TriggerPush || deployment.Actor != "ada" || deployment.Revision != "abc123" || deployment.Message != "ship it" {
+		t.Fatalf("deployment = %+v", deployment)
+	}
+	waitFor(t, "the push deployment to finish", func() bool {
+		stored, err := service.Deployment(deployment.ID)
+		return err == nil && stored.Status.Done()
+	})
+}
+
+func TestHandlePushUsesEnvironmentBranchAndSkipsManual(t *testing.T) {
+	service, _ := testService(t, Options{})
+	req := writeRequest()
+	req.SourceKind = SourceGit
+	req.Compose = ""
+	req.Git = GitSource{Repo: "git@github.com:acme/store.git", Branch: "main", ComposePath: "docker-compose.yml"}
+	req.Environments = []EnvironmentRequest{
+		{Name: "staging", Branch: "develop", Trigger: DeployTrigger{Kind: TriggerPush}, Deploy: DeploySettings{Replicas: 1}},
+		{Name: "production", Trigger: DeployTrigger{Kind: TriggerManual}, Deploy: DeploySettings{Replicas: 1}},
+	}
+	if _, err := service.Create(req); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	queued, err := service.HandlePush("ACME/STORE", "develop", "ada", "abc123", "staging")
+	if err != nil || len(queued) != 1 || queued[0].Environment != "staging" {
+		t.Fatalf("deployments = %+v, error = %v", queued, err)
+	}
+	waitFor(t, "the staging deployment to finish", func() bool {
+		stored, err := service.Deployment(queued[0].ID)
+		return err == nil && stored.Status.Done()
+	})
+}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -74,6 +75,10 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 		Network:            cfg.StackName + "_proxy",
 		Token:              githubModule.Service.CloneToken,
 	}, log)
+	githubModule.SetPushHandler(func(ctx context.Context, event githubprovider.PushEvent) error {
+		_, err := projectModule.Service.HandlePush(event.Repository, event.Branch, event.Actor, event.Revision, event.Message)
+		return err
+	})
 	// Runs live in the process that started them, so a row still marked running
 	// belongs to a process that is gone. Closing those out is startup work.
 	if err := projectModule.Service.Recover(); err != nil {

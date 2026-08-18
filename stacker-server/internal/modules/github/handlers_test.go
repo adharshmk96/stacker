@@ -1,10 +1,12 @@
 package github
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,6 +120,64 @@ func TestWebhookHMAC(t *testing.T) {
 	if emptyRec.Code != http.StatusNotFound {
 		t.Fatalf("empty webhook secret: %d", emptyRec.Code)
 	}
+}
+
+func TestWebhookDispatchesVerifiedBranchPush(t *testing.T) {
+	mod := testModule(t)
+	app := seedApp(t, mod.Service, App{WebhookSecret: "hook-secret"})
+	var got PushEvent
+	mod.SetPushHandler(func(_ context.Context, event PushEvent) error { got = event; return nil })
+
+	body := []byte(`{"ref":"refs/heads/main","after":"abc123","repository":{"full_name":"Acme/App"},"sender":{"login":"ada"},"head_commit":{"message":"ship it"}}`)
+	rec := signedWebhook(t, testRouter(mod), app.WebhookSecret, "push", body)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
+	}
+	want := (PushEvent{Repository: "Acme/App", Branch: "main", Actor: "ada", Revision: "abc123", Message: "ship it"})
+	if got != want {
+		t.Fatalf("event = %+v, want %+v", got, want)
+	}
+}
+
+func TestWebhookIgnoresNonBranchPushes(t *testing.T) {
+	mod := testModule(t)
+	app := seedApp(t, mod.Service, App{WebhookSecret: "hook-secret"})
+	calls := 0
+	mod.SetPushHandler(func(_ context.Context, _ PushEvent) error { calls++; return nil })
+
+	for _, body := range [][]byte{
+		[]byte(`{"ref":"refs/tags/v1.0.0","repository":{"full_name":"acme/app"}}`),
+		[]byte(`{"ref":"refs/heads/main","deleted":true,"repository":{"full_name":"acme/app"}}`),
+	} {
+		if rec := signedWebhook(t, testRouter(mod), app.WebhookSecret, "push", body); rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d", rec.Code)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("handler calls = %d, want 0", calls)
+	}
+}
+
+func TestWebhookReturnsServerErrorWhenDispatchFails(t *testing.T) {
+	mod := testModule(t)
+	app := seedApp(t, mod.Service, App{WebhookSecret: "hook-secret"})
+	mod.SetPushHandler(func(_ context.Context, _ PushEvent) error { return errors.New("queue failed") })
+	body := []byte(`{"ref":"refs/heads/main","repository":{"full_name":"acme/app"}}`)
+	if rec := signedWebhook(t, testRouter(mod), app.WebhookSecret, "push", body); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+func signedWebhook(t *testing.T, router http.Handler, secret, event string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/github/webhooks", strings.NewReader(string(body)))
+	req.Header.Set("X-GitHub-Event", event)
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
 }
 
 func TestCallbackRedirects(t *testing.T) {

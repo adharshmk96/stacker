@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -370,6 +371,68 @@ func (s *Service) Deploy(id, envID string, req DeployRequest) (Deployment, error
 		return Deployment{}, err
 	}
 	return s.engine.Start(item, env, req)
+}
+
+// HandlePush queues every push-enabled environment whose GitHub repository and
+// effective branch match the verified webhook event.
+func (s *Service) HandlePush(repository, branch, actor, revision, message string) ([]Deployment, error) {
+	repository = canonicalGitHubRepo(repository)
+	branch = strings.TrimSpace(branch)
+	if repository == "" || branch == "" {
+		return nil, nil
+	}
+
+	items, err := s.repo.List()
+	if err != nil {
+		return nil, err
+	}
+
+	queued := make([]Deployment, 0)
+	for _, item := range items {
+		if item.SourceKind != SourceGit || canonicalGitHubRepo(item.Git.Repo) != repository {
+			continue
+		}
+		for _, env := range item.Environments {
+			effectiveBranch := strings.TrimSpace(env.Branch)
+			if effectiveBranch == "" {
+				effectiveBranch = strings.TrimSpace(item.Git.Branch)
+			}
+			if env.Trigger.Kind != TriggerPush || effectiveBranch != branch {
+				continue
+			}
+
+			deployment, deployErr := s.engine.Start(item, env, DeployRequest{
+				Actor: actor, Message: message, TriggeredBy: TriggerPush, Revision: revision,
+			})
+			if errors.Is(deployErr, ErrAlreadyDeploying) {
+				continue
+			}
+			if deployErr != nil {
+				return queued, deployErr
+			}
+			queued = append(queued, deployment)
+		}
+	}
+	return queued, nil
+}
+
+func canonicalGitHubRepo(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "git@github.com:") {
+		value = strings.TrimPrefix(value, "git@github.com:")
+	} else if strings.Contains(value, "://") {
+		parsed, err := url.Parse(value)
+		if err != nil || !strings.EqualFold(parsed.Hostname(), "github.com") {
+			return ""
+		}
+		value = parsed.Path
+	}
+	value = strings.TrimSuffix(strings.Trim(value, "/"), ".git")
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	return strings.ToLower(parts[0] + "/" + parts[1])
 }
 
 // Stop removes an environment's stack and its routes. The project keeps its

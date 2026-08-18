@@ -92,11 +92,18 @@ func (e *engine) Start(item Project, env Environment, req DeployRequest) (Deploy
 
 	revision := "compose"
 	if item.SourceKind == SourceGit {
-		revision = "pending"
+		revision = strings.TrimSpace(req.Revision)
+		if revision == "" {
+			revision = "pending"
+		}
 	}
 	actor := strings.TrimSpace(req.Actor)
 	if actor == "" {
 		actor = "manual"
+	}
+	triggeredBy := req.TriggeredBy
+	if triggeredBy == "" {
+		triggeredBy = TriggerManual
 	}
 
 	deployment := Deployment{
@@ -107,7 +114,7 @@ func (e *engine) Start(item Project, env Environment, req DeployRequest) (Deploy
 		Environment:   env.Name,
 		Stack:         StackName(item, env),
 		Status:        StatusQueued,
-		TriggeredBy:   TriggerManual,
+		TriggeredBy:   triggeredBy,
 		Actor:         actor,
 		Revision:      revision,
 		Message:       strings.TrimSpace(req.Message),

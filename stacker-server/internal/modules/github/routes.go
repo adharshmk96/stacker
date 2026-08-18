@@ -20,6 +20,8 @@ func New(db *gorm.DB, log *slog.Logger) *Module {
 	return &Module{Service: service, handler: NewHandler(service)}
 }
 
+func (m *Module) SetPushHandler(handler PushHandler) { m.handler.SetPushHandler(handler) }
+
 func (m *Module) RegisterPublicRoutes(api *gin.RouterGroup) {
 	api.GET("/github/callback/:id", m.handler.callback)
 	api.GET("/github/installations/:id/callback", m.handler.installationCallback)
