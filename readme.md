@@ -7,7 +7,7 @@ Stacker manages application deployments with Docker Swarm.
 Run as root on a clean Linux VPS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/adharshmk96/stacker/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/adharshmk96/stacker/main/install.sh | sudo bash
 ```
 
 The installer adds Docker when needed, initialises Swarm, builds Stacker from
