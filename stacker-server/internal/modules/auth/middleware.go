@@ -34,13 +34,34 @@ func (m *Module) RequireAuth() gin.HandlerFunc {
 	}
 }
 
-// bearerToken reads the token from the Authorization header.
+// bearerToken reads the token from the Authorization header, falling back to
+// the websocket subprotocol list.
+//
+// The fallback exists because a browser cannot set headers on a websocket: the
+// only field it controls is `Sec-WebSocket-Protocol`, so clients send
+// `<name>, <token>` there and the endpoint echoes the name back to complete the
+// handshake. Nothing else about the check changes — it is the same session
+// token, read from the one place the browser can put it.
 func bearerToken(c *gin.Context) string {
 	header := c.GetHeader("Authorization")
 	if len(header) > 7 && strings.EqualFold(header[:7], "Bearer ") {
 		return strings.TrimSpace(header[7:])
 	}
-	return ""
+	return websocketToken(c)
+}
+
+// websocketToken pulls the token out of the subprotocol list, which is only
+// looked at on an actual websocket handshake.
+func websocketToken(c *gin.Context) string {
+	if !strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
+		return ""
+	}
+
+	parts := strings.Split(c.GetHeader("Sec-WebSocket-Protocol"), ",")
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 // CurrentUser returns the user RequireAuth put on the context.

@@ -11,7 +11,8 @@ interface Envelope<T> {
 }
 
 export function useApi() {
-  const baseURL = useRuntimeConfig().public.apiBase
+  const config = useRuntimeConfig().public
+  const baseURL = config.apiBase
 
   /**
    * A 401 means the token is gone or was revoked, whatever the caller was
@@ -44,10 +45,30 @@ export function useApi() {
     }
   }
 
+  /**
+   * Absolute ws:// URL for an API path.
+   *
+   * The origin is the page's own — which is what makes it work behind Traefik
+   * without knowing anything about it. Development is the exception: the nitro
+   * dev proxy does not forward websocket upgrades, so `apiWsOrigin` points
+   * straight at the stacker server there.
+   *
+   * The session token cannot be attached here: a browser sets no headers on a
+   * websocket, so callers pass it as a subprotocol instead (see
+   * `useNodeTerminal`).
+   */
+  function wsUrl(path: string, query: Record<string, string | number> = {}) {
+    const url = new URL(`${baseURL}${path}`, config.apiWsOrigin || window.location.origin)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value))
+    return url.toString()
+  }
+
   return {
     get: <T>(path: string) => request<T>(path),
     post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body }),
     put: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PUT', body }),
+    wsUrl,
     /** DELETE answers 204 with no body, so there is nothing to unwrap. */
     del: async (path: string) => {
       try {

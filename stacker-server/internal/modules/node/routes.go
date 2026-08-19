@@ -47,6 +47,9 @@ func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
 	byID.DELETE("", m.handler.remove)
 	byID.POST("/check-key", m.handler.checkKey)
 	byID.POST("/ping", m.handler.ping)
+	// A websocket, not a request/response call: it carries an interactive shell
+	// on the node for the browser terminal.
+	byID.GET("/terminal", m.handler.terminal)
 
 	swarm := byID.Group("/swarm")
 	// Configure is one verb for both cases: it inits the local node as the

@@ -292,6 +292,20 @@ const managerCount = computed(() =>
 
 const promoteOpen = ref(false)
 
+/* ---- terminal ---- */
+
+const terminalOpen = ref(false)
+
+/**
+ * A shell on the node, in the browser. Remote nodes go over the same key-only
+ * ssh everything else uses, so a node whose key was never verified is not
+ * offered one — the server would refuse it anyway.
+ */
+function onTerminal(node: Node) {
+  selected.value = node
+  terminalOpen.value = true
+}
+
 function onPromote(node: Node) {
   selected.value = node
   promoteOpen.value = true
@@ -334,7 +348,10 @@ function rowActions(node: Node): DropdownMenuItem[][] {
 
   if (node.local) {
     return [
-      [{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => onEdit(node) }],
+      [
+        { label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => onEdit(node) },
+        { label: 'Open terminal', icon: 'i-lucide-terminal', onSelect: () => onTerminal(node) }
+      ],
       swarm
     ]
   }
@@ -351,6 +368,14 @@ function rowActions(node: Node): DropdownMenuItem[][] {
         label: 'Test connection',
         icon: 'i-lucide-plug-zap',
         onSelect: () => onTest(node)
+      },
+      {
+        label: 'Open terminal',
+        icon: 'i-lucide-terminal',
+        // The shell rides on the node's key; without a verified one there is
+        // nothing to connect with.
+        disabled: node.keyStatus !== 'ok',
+        onSelect: () => onTerminal(node)
       },
       {
         label: 'Copy SSH command',
@@ -752,7 +777,16 @@ const formatDate = (value: string) =>
         </template>
 
         <template #actions-cell="{ row }">
-          <div class="flex justify-end">
+          <div class="flex justify-end gap-1">
+            <UButton
+              icon="i-lucide-terminal"
+              color="neutral"
+              variant="ghost"
+              aria-label="Open terminal"
+              title="Open a shell on this node"
+              :disabled="!row.original.local && row.original.keyStatus !== 'ok'"
+              @click="onTerminal(row.original)"
+            />
             <UDropdownMenu :items="rowActions(row.original)">
               <UButton
                 icon="i-lucide-ellipsis-vertical"
@@ -804,4 +838,5 @@ const formatDate = (value: string) =>
     :node="selected"
     :manager-count="managerCount"
   />
+  <NodeTerminalModal v-model:open="terminalOpen" :node="selected" />
 </template>

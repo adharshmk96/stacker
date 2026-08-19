@@ -205,7 +205,8 @@ func respondError(c *gin.Context, err error) {
 		errors.Is(err, ErrDockerNotRunning), errors.Is(err, ErrNoManager),
 		errors.Is(err, ErrKeyNotVerified), errors.Is(err, ErrUnsupportedOS),
 		errors.Is(err, ErrLocalNotLinux), errors.Is(err, ErrSudoRequired),
-		errors.Is(err, ErrCurlMissing), errors.Is(err, ErrDockerInstall):
+		errors.Is(err, ErrCurlMissing), errors.Is(err, ErrDockerInstall),
+		errors.Is(err, ErrTerminalStart):
 		c.JSON(http.StatusPreconditionFailed, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrManagerUnhealthy), errors.Is(err, ErrSwarmUnreachable),
 		errors.Is(err, ErrSwarmCommand):

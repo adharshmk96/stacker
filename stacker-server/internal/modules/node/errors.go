@@ -41,4 +41,7 @@ var (
 	ErrSudoRequired   = errors.New("installing docker needs root: the login user must be root or have passwordless sudo")
 	ErrCurlMissing    = errors.New("curl is missing and could not be installed, so the docker install script cannot be fetched")
 	ErrDockerInstall  = errors.New("the docker install script failed")
+
+	// Terminal errors.
+	ErrTerminalStart = errors.New("the shell for this node could not be started")
 )

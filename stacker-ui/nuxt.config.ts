@@ -18,7 +18,15 @@ export default defineNuxtConfig({
     public: {
       // Same origin: in production the Go server serves both the UI and /api.
       // In dev the nitro proxy below stands in for that.
-      apiBase: '/api'
+      apiBase: '/api',
+
+      // Websockets (the node terminal) do not go through the dev proxy: nitro
+      // does not forward the upgrade, so in development they are opened
+      // straight against the stacker server. Empty in a real build, where the
+      // page's own origin serves the API too.
+      apiWsOrigin: process.env.NODE_ENV === 'production'
+        ? ''
+        : (process.env.STACKER_API_URL ?? 'http://localhost:8080')
     }
   },
 
