@@ -713,13 +713,78 @@ func TestDeployRunsTheWholeSequence(t *testing.T) {
 		t.Errorf("the route was not written: %v", err)
 	}
 
-	// And the workspace is gone: that is the "clean up after deploy" half.
-	entries, err := os.ReadDir(service.engine.workRoot)
-	if err != nil {
-		t.Fatalf("read the work root: %v", err)
+	// The staging directory is gone, but the environment's workspace is not:
+	// the deployed stack resolves its relative bind mounts against that path
+	// every time swarm schedules one of its tasks.
+	staged, err := os.ReadDir(filepath.Join(service.engine.workRoot, stagingName))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read the staging directory: %v", err)
 	}
-	if len(entries) != 0 {
-		t.Errorf("the workspace survived the run: %v", entries)
+	if len(staged) != 0 {
+		t.Errorf("a staging directory survived the run: %v", staged)
+	}
+	if _, err := os.Stat(service.engine.workspacePath(env.ID)); err != nil {
+		t.Errorf("the environment workspace did not survive the run: %v", err)
+	}
+}
+
+// The bug this pins: a stack's relative bind mounts are stored as paths and
+// re-resolved by swarm on every task it schedules, so a workspace removed once
+// the run ends leaves those services rejected with "bind source path does not
+// exist" for as long as the stack lives. Tearing the stack down is the one point
+// at which the checkout is genuinely finished with.
+func TestWorkspaceSurvivesRedeployAndGoesOnStop(t *testing.T) {
+	service, _ := testService(t, Options{})
+
+	item, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	env := item.Environments[0]
+
+	deployOnce := func(what string) {
+		t.Helper()
+		deployment, err := service.Deploy(item.ID, env.ID, DeployRequest{})
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		waitFor(t, what+" to finish", func() bool {
+			stored, err := service.Deployment(deployment.ID)
+			return err == nil && stored.Status.Done()
+		})
+		stored, err := service.Deployment(deployment.ID)
+		if err != nil {
+			t.Fatalf("read the deployment: %v", err)
+		}
+		if stored.Status != StatusSucceeded {
+			t.Fatalf("%s status = %q (%s)\n%s", what, stored.Status, stored.Error, stored.Log)
+		}
+	}
+
+	deployOnce("the first deploy")
+
+	workspace := service.engine.workspacePath(env.ID)
+	compose := filepath.Join(workspace, "docker-compose.yml")
+	if _, err := os.Stat(compose); err != nil {
+		t.Fatalf("the compose file is not in the workspace: %v", err)
+	}
+
+	// A second run replaces the workspace in place rather than deploying from
+	// somewhere new, so the paths the first deploy handed swarm stay valid.
+	deployOnce("the redeploy")
+
+	if _, err := os.Stat(compose); err != nil {
+		t.Errorf("the workspace did not survive a redeploy: %v", err)
+	}
+	if _, err := os.Stat(workspace + ".previous"); !os.IsNotExist(err) {
+		t.Errorf("the superseded workspace was left behind")
+	}
+
+	if err := service.Stop(context.Background(), item.ID, env.ID); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if _, err := os.Stat(workspace); !os.IsNotExist(err) {
+		t.Errorf("the workspace outlived the stack: %v", err)
 	}
 }
 
@@ -1516,26 +1581,42 @@ func TestCloneURLAndTokenRedaction(t *testing.T) {
 	}
 }
 
-func TestRecoverRemovesAbandonedWorkspaces(t *testing.T) {
+// The startup sweep has to tell two things apart that look identical on disk:
+// staging from a run the old process took with it, and the workspace of a stack
+// that is still running and still resolving bind mounts against it.
+func TestRecoverKeepsLiveWorkspacesAndClearsTheRest(t *testing.T) {
 	service, _ := testService(t, Options{})
 
-	orphan := filepath.Join(service.engine.workRoot, "orphan")
-	if err := os.MkdirAll(orphan, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	item, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(orphan, "leftover"), []byte("x"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+	env := item.Environments[0]
+
+	live := service.engine.workspacePath(env.ID)
+	orphan := service.engine.workspacePath("cafe0000000000000000000f")
+	staged := service.engine.stagingPath("run-that-died")
+	for _, dir := range []string{live, orphan, staged} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "leftover"), []byte("x"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
 	}
 
 	if err := service.Recover(); err != nil {
 		t.Fatalf("recover: %v", err)
 	}
-	entries, err := os.ReadDir(service.engine.workRoot)
-	if err != nil {
-		t.Fatalf("read: %v", err)
+
+	if _, err := os.Stat(live); err != nil {
+		t.Errorf("the workspace of a live environment was swept away: %v", err)
 	}
-	if len(entries) != 0 {
-		t.Errorf("abandoned workspace survived: %v", entries)
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Errorf("the workspace of a deleted environment survived: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(service.engine.workRoot, stagingName)); !os.IsNotExist(err) {
+		t.Errorf("the staging directory survived the restart")
 	}
 }
 

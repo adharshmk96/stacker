@@ -16,10 +16,18 @@ import (
 // The deploy engine.
 //
 // A deploy runs entirely on the machine stacker is installed on: it clones the
-// repository into a throwaway workspace, builds whatever the compose file builds,
-// deploys the result as a swarm stack, publishes the environment's hostnames
-// through Traefik, and deletes the workspace again. Nothing is left on disk
-// except the images the stack needs to run.
+// repository into a staging directory, promotes that checkout to the
+// environment's workspace, builds whatever the compose file builds, deploys the
+// result as a swarm stack and publishes the environment's hostnames through
+// Traefik.
+//
+// The workspace outlives the run, and that is deliberate. A compose file may
+// bind-mount a path out of its own repository, and `docker stack deploy` stores
+// that path rather than its contents: swarm re-resolves it on the node every
+// time it schedules a task, which is every restart, every rollout and every
+// crash-loop retry for as long as the stack exists. A workspace deleted at the
+// end of the run leaves those services rejected with "bind source path does not
+// exist" forever, so the checkout stays until the stack itself is torn down.
 //
 // The run outlives the HTTP request that started it — a build takes minutes — so
 // Start returns as soon as the row exists and the work happens on its own
@@ -40,8 +48,8 @@ type engine struct {
 	exec   Exec
 	token  tokenFunc
 
-	// workRoot is the parent of every run's workspace. Each run gets a
-	// directory under it, removed when the run ends.
+	// workRoot is the parent of every workspace. Each environment gets a
+	// lasting directory under it, plus a staging directory per run.
 	workRoot string
 	// network is the attachable overlay Traefik shares with deployed services.
 	network string
@@ -220,6 +228,14 @@ func (e *engine) Teardown(ctx context.Context, envID, stack string) error {
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "nothing found") {
 		return err
 	}
+
+	// The stack is gone, so nothing will resolve a bind mount against the
+	// checkout again. Reported rather than fatal: a workspace that will not
+	// delete is wasted disk, not a reason to refuse to stop a stack.
+	if err := e.removeWorkspace(envID); err != nil {
+		e.log.Warn("could not remove the workspace of a torn-down environment",
+			"environment", envID, "error", err)
+	}
 	return nil
 }
 
@@ -235,13 +251,13 @@ func (e *engine) work(ctx context.Context, state *run, deployment Deployment, it
 		e.log.Error("could not mark the deployment running", "deployment", deployment.ID, "error", err)
 	}
 
-	workspace := filepath.Join(e.workRoot, deployment.ID)
-	revision, err := e.steps(ctx, state, &deployment, item, env, workspace, ref)
+	staging := e.stagingPath(deployment.ID)
+	revision, err := e.steps(ctx, state, &deployment, item, env, staging, ref)
 
-	// Cleanup runs whatever happened: a failed run's workspace is no more
-	// useful than a successful one's, and the log already holds everything the
-	// user needs to see.
-	e.cleanup(state, workspace)
+	// Only the staging directory is discarded, and only if the run did not get
+	// far enough to promote it. The environment's workspace is left alone: it is
+	// what the deployed stack's bind mounts point at.
+	e.discard(state, staging)
 
 	if revision != "" {
 		deployment.Revision = revision
@@ -258,18 +274,27 @@ func (e *engine) steps(
 	deployment *Deployment,
 	item Project,
 	env Environment,
-	workspace string,
+	staging string,
 	ref string,
 ) (string, error) {
 	stack := deployment.Stack
 	e.emit(state, fmt.Sprintf("==> deploying %s · %s as stack %s", item.Name, env.Name, stack))
 
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
+	if err := os.MkdirAll(staging, 0o700); err != nil {
 		return "", fmt.Errorf("could not create the workspace: %w", err)
 	}
 
 	// 1. Get the compose file, and where it sits on disk.
-	revision, basePath, content, err := e.source(ctx, state, item, env, workspace, ref)
+	revision, basePath, content, err := e.source(ctx, state, item, env, staging, ref)
+	if err != nil {
+		return revision, err
+	}
+
+	// 1b. Move the checkout to the path the stack will refer to for the rest of
+	// its life, and work from there. It happens before the build so that a
+	// relative build context and a relative bind mount are read from the same
+	// directory the deployed stack will keep using.
+	basePath, err = e.promote(state, staging, e.workspacePath(env.ID), basePath)
 	if err != nil {
 		return revision, err
 	}
@@ -515,15 +540,84 @@ func (e *engine) cloneURL(ctx context.Context, item Project, state *run) (url, d
 	return strings.Replace(repo, "https://", "https://x-access-token:"+token+"@", 1), display, nil
 }
 
-// cleanup removes the run's workspace. It is the "clean up after deploy" half of
-// the contract: the clone, the compose files stacker generated and every build
-// context go away, and only the images the stack runs from are kept.
-func (e *engine) cleanup(state *run, workspace string) {
-	if err := os.RemoveAll(workspace); err != nil {
-		e.emit(state, "--> could not remove the workspace: "+err.Error())
-		return
+/* ---- workspaces ---- */
+
+// stagingName is the directory every run stages under. The leading dot keeps it
+// out of the way of the environment directories beside it, and gives the startup
+// sweep an unambiguous name to recognise.
+const stagingName = ".staging"
+
+// stagingPath is where one run clones and writes before anything is committed.
+func (e *engine) stagingPath(deploymentID string) string {
+	return filepath.Join(e.workRoot, stagingName, deploymentID)
+}
+
+// workspacePath is an environment's lasting checkout — the directory its
+// deployed stack resolves relative bind mounts against.
+//
+// It is keyed by environment id rather than by stack name so that renaming a
+// project does not strand the directory its running stack still points at.
+func (e *engine) workspacePath(envID string) string {
+	return filepath.Join(e.workRoot, "env-"+envID)
+}
+
+// promote replaces the environment's workspace with what this run staged, and
+// returns the given path re-rooted into its new home.
+//
+// The swap is a rename rather than a copy into place: a half-written workspace
+// is one a running stack could be scheduled against mid-write, and a rename is
+// the only step here docker cannot observe partially. The previous workspace is
+// moved aside first so a failed swap can put it back.
+func (e *engine) promote(state *run, staging, live, path string) (string, error) {
+	relative, err := filepath.Rel(staging, path)
+	if err != nil {
+		return "", fmt.Errorf("could not locate %s in the workspace: %w", path, err)
 	}
-	e.emit(state, "--> removed the workspace")
+
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		return "", fmt.Errorf("could not create the workspace: %w", err)
+	}
+
+	previous := live + ".previous"
+	if err := os.RemoveAll(previous); err != nil {
+		return "", fmt.Errorf("could not clear the previous workspace: %w", err)
+	}
+	if err := os.Rename(live, previous); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("could not set aside the previous workspace: %w", err)
+	}
+
+	if err := os.Rename(staging, live); err != nil {
+		// Put the old one back: it is what the currently running stack's bind
+		// mounts point at, and losing it would break a stack this run never
+		// managed to replace.
+		if restore := os.Rename(previous, live); restore != nil && !os.IsNotExist(restore) {
+			e.emit(state, "--> could not restore the previous workspace: "+restore.Error())
+		}
+		return "", fmt.Errorf("could not install the workspace: %w", err)
+	}
+
+	if err := os.RemoveAll(previous); err != nil {
+		e.emit(state, "--> could not remove the previous workspace: "+err.Error())
+	}
+
+	e.emit(state, "--> workspace at "+live)
+	return filepath.Join(live, relative), nil
+}
+
+// discard removes a run's staging directory. A promoted run has already moved it
+// away, so this is a no-op in the common case and the mess-remover when a run
+// failed before it got that far.
+func (e *engine) discard(state *run, staging string) {
+	if err := os.RemoveAll(staging); err != nil {
+		e.emit(state, "--> could not remove the staging directory: "+err.Error())
+	}
+}
+
+// removeWorkspace drops an environment's checkout. It belongs with tearing the
+// stack down: once no task will be scheduled against those paths again, keeping
+// them is just disk.
+func (e *engine) removeWorkspace(envID string) error {
+	return os.RemoveAll(e.workspacePath(envID))
 }
 
 // finish writes the run's outcome and its log, and stops tracking it.

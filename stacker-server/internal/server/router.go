@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"stacker/internal/config"
@@ -70,7 +69,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	// Traefik directory their hostnames are published through, and the overlay
 	// network Traefik shares with whatever they deploy.
 	projectModule := project.New(db, project.Options{
-		WorkRoot:           filepath.Join(cfg.DataDir, "workspaces"),
+		WorkRoot:           cfg.WorkRoot,
 		TraefikDynamicPath: cfg.TraefikDynamicPath,
 		Network:            cfg.StackName + "_proxy",
 		Token:              githubModule.Service.CloneToken,

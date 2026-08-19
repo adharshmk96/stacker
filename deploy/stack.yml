@@ -32,11 +32,20 @@ services:
       STACKER_ADDR: :8080
       STACKER_ENV: production
       STACKER_DATA_DIR: /data
+      # Deploy workspaces, unlike everything else in /data, cannot live behind a
+      # named volume. A compose file may bind-mount a path out of its own
+      # repository, and swarm resolves that path on the host when it schedules
+      # the task — so the checkout has to sit at a path that means the same
+      # thing here and on the node. The bind below is mounted at the identical
+      # path on both sides for exactly that reason; changing one without the
+      # other gives every such service "bind source path does not exist".
+      STACKER_WORK_ROOT: /var/lib/stacker/workspaces
       STACKER_ADVERTISE_ADDR: __STACKER_ADVERTISE_ADDR__
       STACKER_STACK_NAME: __STACKER_STACK_NAME__
       STACKER_TRAEFIK_DYNAMIC_PATH: /etc/stacker/traefik/dynamic/stacker.yml
     volumes:
       - stacker-data:/data
+      - /var/lib/stacker/workspaces:/var/lib/stacker/workspaces
       - traefik-config:/etc/stacker/traefik
       - /var/run/docker.sock:/var/run/docker.sock
     networks:

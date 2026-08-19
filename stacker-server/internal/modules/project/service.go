@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -54,17 +55,64 @@ func (s *Service) Recover() error {
 	if err := os.MkdirAll(s.engine.workRoot, 0o700); err != nil {
 		return err
 	}
-	// Workspaces are per run and the runs are gone, so whatever is left under
-	// the work root is abandoned build context.
+	s.sweepWorkspaces()
+	return s.repo.ResetRunning("the server restarted while this deployment was running")
+}
+
+// sweepWorkspaces clears what the work root should not be holding after a
+// restart, and only that.
+//
+// An environment's workspace is not abandoned just because no run is in flight:
+// it is the directory its deployed stack resolves relative bind mounts against,
+// and swarm re-reads those paths on every task it schedules. Deleting them here
+// would break every running stack that binds a file out of its own repository.
+// What can go is staging directories, whose runs died with the old process, and
+// workspaces belonging to environments that no longer exist.
+func (s *Service) sweepWorkspaces() {
+	if err := os.RemoveAll(filepath.Join(s.engine.workRoot, stagingName)); err != nil {
+		s.log.Warn("could not clear the staging directory", "error", err)
+	}
+
 	entries, err := os.ReadDir(s.engine.workRoot)
-	if err == nil {
-		for _, entry := range entries {
-			if err := os.RemoveAll(s.engine.workRoot + "/" + entry.Name()); err != nil {
-				s.log.Warn("could not remove an abandoned workspace", "name", entry.Name(), "error", err)
-			}
+	if err != nil {
+		return
+	}
+
+	known, err := s.knownEnvironments()
+	if err != nil {
+		// Without the environment list there is no way to tell a live workspace
+		// from a stale one, and keeping a stale directory costs disk while
+		// deleting a live one breaks a running stack.
+		s.log.Warn("could not list environments, leaving the workspaces alone", "error", err)
+		return
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		envID, ok := strings.CutPrefix(name, "env-")
+		if !ok || known[envID] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(s.engine.workRoot, name)); err != nil {
+			s.log.Warn("could not remove an abandoned workspace", "name", name, "error", err)
 		}
 	}
-	return s.repo.ResetRunning("the server restarted while this deployment was running")
+}
+
+// knownEnvironments is the id set of every environment stacker still has a
+// record of.
+func (s *Service) knownEnvironments() (map[string]bool, error) {
+	items, err := s.repo.List()
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]bool{}
+	for _, item := range items {
+		for _, env := range item.Environments {
+			known[env.ID] = true
+		}
+	}
+	return known, nil
 }
 
 /* ---- reads ---- */

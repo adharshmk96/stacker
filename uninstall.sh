@@ -51,6 +51,15 @@ remove_volumes() {
   done
 }
 
+# The work root is a host directory rather than a volume, so removing the volumes
+# does not take it with them.
+remove_work_root() {
+  if [ -d /var/lib/stacker ]; then
+    log "Removing the deploy work root /var/lib/stacker"
+    rm -rf /var/lib/stacker
+  fi
+}
+
 remove_image() {
   if docker image inspect "$IMAGE" >/dev/null 2>&1; then
     log "Removing image $IMAGE"
@@ -71,6 +80,7 @@ main() {
 
   remove_stack
   remove_volumes
+  remove_work_root
   remove_image
 
   log "Stacker is completely removed. Docker and Docker Swarm were preserved."

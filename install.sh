@@ -134,6 +134,11 @@ populate_traefik_config() {
   docker volume create stacker-traefik-config </dev/null >/dev/null
   docker volume create stacker-traefik-data </dev/null >/dev/null
   docker volume create stacker-data </dev/null >/dev/null
+  # The work root is a host directory rather than a volume on purpose: swarm
+  # resolves a stack's relative bind mounts on the host, so a deploy's checkout
+  # has to exist at the same path outside the stacker container as inside it.
+  mkdir -p /var/lib/stacker/workspaces
+  chmod 700 /var/lib/stacker/workspaces
   docker run --rm \
     -v stacker-traefik-config:/target \
     -v "$RENDER_TMP:/source:ro" \
