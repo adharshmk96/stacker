@@ -127,22 +127,34 @@ resolve_source() {
 populate_traefik_config() {
   local source_dir="$1" host="$2"
   RENDER_TMP="$(mktemp -d)"
-  mkdir -p "$RENDER_TMP/dynamic"
-  cp "$source_dir/deploy/traefik/traefik.yml" "$RENDER_TMP/traefik.yml"
-  sed "s/__STACKER_HOST__/$host/g" "$source_dir/deploy/traefik/dynamic/stacker.yml" > "$RENDER_TMP/dynamic/stacker.yml"
-
   docker volume create stacker-traefik-config </dev/null >/dev/null
   docker volume create stacker-traefik-data </dev/null >/dev/null
   docker volume create stacker-data </dev/null >/dev/null
+
+  # The Traefik config volume is the source of truth for configured domains and
+  # project routers. Never replace it on an update: doing so would erase both
+  # dashboard changes and unrelated Traefik configuration.
+  if docker run --rm \
+    -v stacker-traefik-config:/target:ro \
+    alpine:3.23 sh -c 'find /target -mindepth 1 -print -quit | grep -q .' </dev/null; then
+    log "Keeping existing Traefik configuration"
+  else
+    mkdir -p "$RENDER_TMP/dynamic"
+    cp "$source_dir/deploy/traefik/traefik.yml" "$RENDER_TMP/traefik.yml"
+    sed "s/__STACKER_HOST__/$host/g" "$source_dir/deploy/traefik/dynamic/stacker.yml" > "$RENDER_TMP/dynamic/stacker.yml"
+
+    log "Initialising Traefik configuration"
+    docker run --rm \
+      -v stacker-traefik-config:/target \
+      -v "$RENDER_TMP:/source:ro" \
+      alpine:3.23 sh -c 'cp -R /source/. /target/' </dev/null
+  fi
+
   # The work root is a host directory rather than a volume on purpose: swarm
   # resolves a stack's relative bind mounts on the host, so a deploy's checkout
   # has to exist at the same path outside the stacker container as inside it.
   mkdir -p /var/lib/stacker/workspaces
   chmod 700 /var/lib/stacker/workspaces
-  docker run --rm \
-    -v stacker-traefik-config:/target \
-    -v "$RENDER_TMP:/source:ro" \
-    alpine:3.23 sh -c 'rm -rf /target/* && cp -R /source/. /target/' </dev/null
 }
 
 deploy() {

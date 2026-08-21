@@ -12,7 +12,9 @@ curl -fsSL https://raw.githubusercontent.com/adharshmk96/stacker/main/install.sh
 
 The installer adds Docker when needed, initialises Swarm, builds Stacker from
 source, and deploys Stacker plus Traefik. It prints the generated HTTPS URL.
-Rerunning the same command safely reconciles and upgrades the installation.
+Rerunning the same command safely rebuilds and upgrades Stacker, then restarts
+both Stacker and Traefik. Existing Docker volumes, Traefik configuration,
+configured domains, certificates, and other running stacks are preserved.
 
 Useful overrides:
 
