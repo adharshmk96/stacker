@@ -87,7 +87,12 @@ function removeDomain(id: string) {
       </div>
 
       <p v-if="domain.host" class="mt-3 border-t border-default pt-3 font-mono text-xs text-dimmed">
-        {{ domain.tls === 'none' ? 'http' : 'https' }}://{{ domain.host }}
+        <a
+          :href="`${domain.tls === 'none' ? 'http' : 'https'}://${domain.host}`"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="hover:text-default hover:underline"
+        >{{ domain.tls === 'none' ? 'http' : 'https' }}://{{ domain.host }}</a>
         → {{ domain.service || 'service' }}:{{ domain.port }}
       </p>
     </div>
