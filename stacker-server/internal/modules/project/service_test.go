@@ -434,10 +434,11 @@ services:
 	}
 
 	out, err := buildOverride(spec, overrideOptions{
-		Stack:         "stk-shop-production",
-		Network:       "stacker_proxy",
-		ProxyServices: map[string]bool{"web": true},
-		Env:           map[string]string{"NODE_ENV": "production"},
+		Stack:          "stk-shop-production",
+		BuildImageTags: map[string]string{"web": "stacker/stk-shop-production/web:deploy-123"},
+		Network:        "stacker_proxy",
+		ProxyServices:  map[string]bool{"web": true},
+		Env:            map[string]string{"NODE_ENV": "production"},
 		Deploy: DeploySettings{
 			Strategy: StrategyRolling, Replicas: 3, Placement: "node.labels.tier==edge",
 			HealthGraceSec: 45, AutoRollback: true,
@@ -472,7 +473,7 @@ services:
 	}
 
 	web := doc.Services["web"]
-	if web.Image != "stacker/stk-shop-production/web:latest" {
+	if web.Image != "stacker/stk-shop-production/web:deploy-123" {
 		t.Errorf("web image = %q, want a generated tag", web.Image)
 	}
 	if web.Deploy.Replicas == nil || *web.Deploy.Replicas != 3 {
@@ -688,6 +689,17 @@ func TestDeployRunsTheWholeSequence(t *testing.T) {
 	// `docker compose` takes -f. Passing -c here is rejected outright.
 	if !strings.Contains(build.String(), " -f ") {
 		t.Errorf("build args = %q, want compose files passed as -f", build.String())
+	}
+	if !strings.Contains(build.String(), "--no-cache") {
+		t.Errorf("build args = %q, want --no-cache so the checked-out source is rebuilt", build.String())
+	}
+	override, err := os.ReadFile(filepath.Join(service.engine.workRoot, "env-"+env.ID, ".stacker-override.yml"))
+	if err != nil {
+		t.Fatalf("read deployed compose override: %v", err)
+	}
+	wantImage := imageTag(stack, "web", deployment.ID)
+	if !strings.Contains(string(override), wantImage) {
+		t.Errorf("override = %s, want deployment image %q", override, wantImage)
 	}
 
 	deploy, ok := rec.find("stack", "deploy", stack)

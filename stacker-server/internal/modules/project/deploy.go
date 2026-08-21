@@ -328,12 +328,17 @@ func (e *engine) steps(
 	// build context out from under `build: .`.
 	composeDir := filepath.Dir(basePath)
 	environment := envMap(env)
+	buildImageTags := make(map[string]string, len(spec.Builds))
+	for _, service := range spec.Builds {
+		buildImageTags[service] = imageTag(stack, service, deployment.ID)
+	}
 	override, err := buildOverride(spec, overrideOptions{
-		Stack:         stack,
-		Network:       e.network,
-		ProxyServices: proxyServices(env.Domains),
-		Env:           environment,
-		Deploy:        env.Deploy,
+		Stack:          stack,
+		BuildImageTags: buildImageTags,
+		Network:        e.network,
+		ProxyServices:  proxyServices(env.Domains),
+		Env:            environment,
+		Deploy:         env.Deploy,
 	})
 	if err != nil {
 		return revision, err
@@ -356,10 +361,12 @@ func (e *engine) steps(
 
 	// 4. Build, if anything in the file is built rather than pulled.
 	if len(spec.Builds) > 0 {
-		e.emit(state, "==> building "+strings.Join(spec.Builds, ", "))
+		e.emit(state, "==> building "+strings.Join(spec.Builds, ", ")+" without cache")
 
 		args := append([]string{"compose"}, composeFiles...)
-		args = append(args, "--project-name", stack, "build")
+		// Project source is the deployment input. Do not accept a cached layer
+		// here: a successful run must contain the revision it checked out.
+		args = append(args, "--project-name", stack, "build", "--no-cache")
 		if env.Deploy.AlwaysPull {
 			// Re-fetch the base images, so a `FROM node:20` that moved is
 			// picked up instead of building on a months-old local layer.

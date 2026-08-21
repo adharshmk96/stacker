@@ -108,18 +108,21 @@ func (s composeSpec) Has(name string) bool {
 	return false
 }
 
-// imageTag is the name stacker builds a service's image under when the compose
-// file does not name one. The stack and service are in the tag so the image is
-// recognisable in `docker image ls`, and `latest` rather than a per-run tag so a
-// rebuild replaces the old image instead of accumulating one per deploy.
-func imageTag(stack, service string) string {
-	return "stacker/" + stack + "/" + service + ":latest"
+// imageTag names a locally built image for one deployment. A deployment ID is
+// part of the tag so Swarm sees a changed service specification after a rebuild
+// instead of keeping tasks that refer to an unchanged `:latest` tag.
+func imageTag(stack, service, deploymentID string) string {
+	return "stacker/" + stack + "/" + service + ":" + deploymentID
 }
 
 // overrideOptions is everything the override needs that is not in the compose
 // file itself.
 type overrideOptions struct {
 	Stack string
+	// BuildImageTags overrides every locally built service. Docker Swarm ignores
+	// build directives, so this must be the same tag Docker Compose built and it
+	// must change for each deployment to make Swarm replace the task.
+	BuildImageTags map[string]string
 	// Network is the attachable overlay Traefik sits on. Every service that a
 	// domain points at has to join it, or the proxy cannot resolve the service
 	// name it is asked to forward to.
@@ -159,8 +162,10 @@ func buildOverride(spec composeSpec, opts overrideOptions) (string, error) {
 			service["environment"] = environment
 		}
 
-		if spec.NeedsImageTag[name] {
-			service["image"] = imageTag(opts.Stack, name)
+		if tag := opts.BuildImageTags[name]; tag != "" {
+			service["image"] = tag
+		} else if spec.NeedsImageTag[name] {
+			service["image"] = imageTag(opts.Stack, name, "latest")
 		}
 
 		// `default` is listed explicitly: naming a network in an override
