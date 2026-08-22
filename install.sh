@@ -29,7 +29,7 @@ install_base_tools() {
   done
   [ "${#missing[@]}" -eq 0 ] && return
 
-  log "Installing required tools: ${missing[*]}"
+  log "Installing required tools with the system package manager: ${missing[*]}"
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq </dev/null
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl git sed gawk hostname iproute2 ca-certificates </dev/null
@@ -46,7 +46,7 @@ install_base_tools() {
 
 ensure_docker() {
   if ! command -v docker >/dev/null 2>&1; then
-    log "Installing Docker Engine"
+    log "Installing Docker Engine using https://get.docker.com"
     curl -fsSL https://get.docker.com | sh
   fi
   if ! docker info >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
@@ -99,7 +99,7 @@ ensure_swarm_manager() {
   control="$(docker info --format '{{.Swarm.ControlAvailable}}')"
 
   if [ "$state" = "inactive" ]; then
-    log "Initialising Docker Swarm on $address"
+    log "Initialising Docker Swarm manager with advertise address: $address"
     docker swarm init --advertise-addr "$address" </dev/null
   fi
 
@@ -112,15 +112,17 @@ ensure_swarm_manager() {
 resolve_source() {
   if [ -f "${STACKER_SOURCE_DIR:-}/Dockerfile" ] && [ -f "${STACKER_SOURCE_DIR:-}/deploy/stack.yml" ]; then
     SOURCE_DIR="$STACKER_SOURCE_DIR"
+    log "Using supplied Stacker source directory: $SOURCE_DIR"
     return
   fi
   if [ -f "$SCRIPT_DIR/Dockerfile" ] && [ -f "$SCRIPT_DIR/deploy/stack.yml" ]; then
     SOURCE_DIR="$SCRIPT_DIR"
+    log "Using Stacker source directory beside this installer: $SOURCE_DIR"
     return
   fi
 
   SOURCE_TMP="$(mktemp -d)"
-  log "Cloning Stacker ${REPOSITORY_REF}"
+  log "Cloning Stacker ${REPOSITORY_REF} into temporary source directory: $SOURCE_TMP"
   git clone --quiet --depth 1 --branch "$REPOSITORY_REF" "$REPOSITORY_URL" "$SOURCE_TMP" </dev/null
   SOURCE_DIR="$SOURCE_TMP"
 }
@@ -139,7 +141,7 @@ populate_traefik_config() {
   if docker run --rm \
     -v stacker-traefik-config:/target:ro \
     alpine:3.23 sh -c 'find /target -mindepth 1 -print -quit | grep -q .' </dev/null; then
-    log "Keeping existing Traefik configuration"
+    log "Keeping existing Traefik configuration in Docker volume stacker-traefik-config (/dynamic/stacker.yml)"
   else
     if [ "$setup_mode" = "local" ]; then
       static_config="traefik.local.yml"
@@ -150,7 +152,7 @@ populate_traefik_config() {
     cp "$source_dir/deploy/traefik/$static_config" "$RENDER_TMP/traefik.yml"
     sed "s/__STACKER_HOST__/$host/g" "$source_dir/deploy/traefik/dynamic/$dynamic_config" > "$RENDER_TMP/dynamic/stacker.yml"
 
-    log "Initialising Traefik configuration"
+    log "Initialising Traefik configuration from $RENDER_TMP into Docker volume stacker-traefik-config (/dynamic/stacker.yml)"
     docker run --rm \
       -v stacker-traefik-config:/target \
       -v "$RENDER_TMP:/source:ro" \
@@ -162,6 +164,7 @@ populate_traefik_config() {
   # has to exist at the same path outside the stacker container as inside it.
   mkdir -p /var/lib/stacker/workspaces
   chmod 700 /var/lib/stacker/workspaces
+  log "Ensuring project workspaces directory exists: /var/lib/stacker/workspaces"
 }
 
 is_valid_host() {
@@ -226,7 +229,7 @@ deploy() {
   node_name="$(hostname -f 2>/dev/null || hostname)"
   stack_file="$RENDER_TMP/stack.yml"
 
-  log "Building $IMAGE"
+  log "Building Docker image $IMAGE from source directory: $source_dir"
   docker build --pull \
     --build-arg "STACKER_VERSION=$REPOSITORY_REF" \
     --build-arg "STACKER_BUILT_AT=$built_at" \
@@ -239,7 +242,7 @@ deploy() {
     -e "s|__STACKER_STACK_NAME__|$STACK_NAME|g" \
     "$source_dir/deploy/stack.yml" > "$stack_file"
 
-  log "Deploying $STACK_NAME"
+  log "Deploying Docker Swarm stack $STACK_NAME using rendered manifest: $stack_file"
   docker stack deploy --detach=true --resolve-image never -c "$stack_file" "$STACK_NAME" </dev/null
 
   # Local image tags and named-volume config do not alter the service specs.
@@ -265,7 +268,7 @@ main() {
   elif [ -n "$installed_host" ]; then
     host="$installed_host"
     setup_mode="existing"
-    log "Preserving configured domain: $installed_host"
+    log "Preserving configured domain from Docker volume stacker-traefik-config (/dynamic/stacker.yml): $installed_host"
   else
     public_address="$(public_ip || true)"
     setup_choice="$(read_setup_choice "$public_address")"
@@ -290,8 +293,8 @@ main() {
 
   scheme="https"
   [ "$setup_mode" = "local" ] && scheme="http"
-  log "Stacker is installed: $scheme://$host"
-  log "Rerun this installer at any time to reconcile or upgrade the deployment."
+  log "Stacker is installed at: $scheme://$host"
+  log "Rerun this installer at any time to reconcile or upgrade the deployment; persistent data is in Docker volumes stacker-data, stacker-traefik-config, and stacker-traefik-data."
 }
 
 main "$@"
