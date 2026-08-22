@@ -645,10 +645,10 @@ const formatDate = (value: string) =>
               />
             </div>
             <div class="leading-tight">
-              <p class="flex items-center gap-2 font-medium text-highlighted">
+              <NuxtLink :to="`/dashboard/nodes/${row.original.id}/monitoring`" class="flex items-center gap-2 font-medium text-highlighted hover:text-primary">
                 {{ row.original.name }}
                 <UBadge v-if="row.original.local" label="This machine" color="neutral" variant="subtle" size="sm" />
-              </p>
+              </NuxtLink>
               <p class="flex items-center gap-2 text-xs">
                 <span
                   class="inline-flex items-center gap-1"

@@ -10,6 +10,7 @@ import (
 	"stacker/internal/database"
 	"stacker/internal/modules/auth"
 	githubprovider "stacker/internal/modules/github"
+	"stacker/internal/modules/monitoring"
 	"stacker/internal/modules/node"
 	"stacker/internal/modules/project"
 	"stacker/internal/modules/serversettings"
@@ -41,6 +42,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 		return nil, err
 	}
 	nodeModule := node.New(db, keyModule.Service, log)
+	monitoringModule := monitoring.New(nodeModule.Service, cfg.MetricsURL)
 
 	// Auth guards every other module, so it is built first — and it is handed
 	// the data wipe rather than importing it, since erasing nodes is the node
@@ -114,6 +116,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	protected.Use(authModule.RequireAuth())
 	keyModule.RegisterRoutes(protected)
 	nodeModule.RegisterRoutes(protected)
+	monitoringModule.RegisterRoutes(protected)
 	swarmModule.RegisterRoutes(protected)
 	githubModule.RegisterRoutes(protected)
 	serverModule.RegisterRoutes(protected)

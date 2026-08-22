@@ -16,7 +16,7 @@ a custom HTTPS domain. It detects a public IPv4 address and recommends
 QuickStart when available; without one it defaults to Local. Later runs do not
 ask again and preserve the configured Traefik domain. The installer adds Docker
 when needed, initialises Swarm, builds Stacker from source, and deploys Stacker
-plus Traefik.
+plus Traefik and the private monitoring services.
 Rerunning the same command safely rebuilds and upgrades Stacker, then restarts
 both Stacker and Traefik. Existing Docker volumes, Traefik configuration,
 configured domains, certificates, and other running stacks are preserved.
@@ -31,9 +31,19 @@ STACKER_VERSION=main \
 bash install.sh
 ```
 
-Persistent state lives in the `stacker-data`, `stacker-traefik-config`, and
-`stacker-traefik-data` Docker volumes. The Traefik volume contains
+Persistent state lives in the `stacker-data`, `stacker-traefik-config`,
+`stacker-traefik-data`, and `stacker-victoriametrics-data` Docker volumes. The Traefik volume contains
 `/etc/traefik/traefik.yml` and `/etc/traefik/dynamic/stacker.yml`.
+
+## Node monitoring
+
+The installer runs node-exporter and cAdvisor on every Swarm node and stores
+their private metrics in VictoriaMetrics for 30 days. Nothing is publicly
+exposed: Stacker's authenticated API is the only reader. Open a node from
+**Nodes** to see CPU, memory, disk, network, and per-container history.
+Monitoring is isolated from Stacker's application database; a missing exporter
+or unavailable metrics store shows an unavailable state without affecting node
+management or deployments.
 
 ## Projects
 

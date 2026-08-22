@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 readonly STACK_NAME="${STACKER_STACK_NAME:-stacker}"
 readonly IMAGE="${STACKER_IMAGE:-stacker:local}"
-readonly VOLUMES=(stacker-data stacker-traefik-config stacker-traefik-data)
+readonly VOLUMES=(stacker-data stacker-traefik-config stacker-traefik-data stacker-victoriametrics-data)
 
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }

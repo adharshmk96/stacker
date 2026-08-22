@@ -134,6 +134,7 @@ populate_traefik_config() {
   docker volume create stacker-traefik-config </dev/null >/dev/null
   docker volume create stacker-traefik-data </dev/null >/dev/null
   docker volume create stacker-data </dev/null >/dev/null
+  docker volume create stacker-victoriametrics-data </dev/null >/dev/null
 
   # The Traefik config volume is the source of truth for configured domains and
   # project routers. Never replace it on an update: doing so would erase both
@@ -224,10 +225,11 @@ read_setup_choice() {
 
 deploy() {
   local source_dir="$1" advertise_addr="$2" host="$3"
-  local built_at node_name stack_file
+  local built_at node_name stack_file scrape_file
   built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   node_name="$(hostname -f 2>/dev/null || hostname)"
   stack_file="$RENDER_TMP/stack.yml"
+  scrape_file="$RENDER_TMP/victoriametrics-scrape.yml"
 
   log "Building Docker image $IMAGE from source directory: $source_dir"
   docker build --pull \
@@ -241,6 +243,9 @@ deploy() {
     -e "s|__STACKER_ADVERTISE_ADDR__|$advertise_addr|g" \
     -e "s|__STACKER_STACK_NAME__|$STACK_NAME|g" \
     "$source_dir/deploy/stack.yml" > "$stack_file"
+
+  sed -e "s|__STACKER_STACK_NAME__|$STACK_NAME|g" \
+    "$source_dir/deploy/victoriametrics-scrape.yml" > "$scrape_file"
 
   log "Deploying Docker Swarm stack $STACK_NAME using rendered manifest: $stack_file"
   docker stack deploy --detach=true --resolve-image never -c "$stack_file" "$STACK_NAME" </dev/null

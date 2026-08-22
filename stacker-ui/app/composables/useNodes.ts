@@ -59,6 +59,9 @@ export function useNodes() {
     return node
   }
 
+  /** Finds the current row without making another request. */
+  const find = (id: string) => items.value.find(item => item.id === id)
+
   async function update(id: string, payload: NodePayload) {
     const node = await api.put<Node>(`/nodes/${id}`, payload)
 
@@ -216,6 +219,7 @@ export function useNodes() {
     pending,
     error,
     load,
+    find,
     create,
     update,
     remove,
