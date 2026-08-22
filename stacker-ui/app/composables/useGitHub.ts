@@ -1,4 +1,4 @@
-import type { GitHubApp, GitHubManifestStart, GitHubRepository } from '~/types/github'
+import type { ExistingGitHubApp, GitHubApp, GitHubManifestStart, GitHubRepository } from '~/types/github'
 
 const app = ref<GitHubApp | null>(null)
 const repositories = ref<GitHubRepository[]>([])
@@ -75,6 +75,13 @@ export function useGitHub() {
     window.location.assign(`https://github.com/apps/${encodeURIComponent(app.value.slug)}/installations/new`)
   }
 
+  async function connectExisting(existing: ExistingGitHubApp) {
+    const connected = await api.post<GitHubApp>('/github/apps/existing', existing)
+    app.value = connected
+    await loadRepositories()
+    loaded = true
+  }
+
   async function loadRepositories() {
     repositories.value = await api.get<GitHubRepository[]>('/github/repositories')
   }
@@ -88,5 +95,5 @@ export function useGitHub() {
     loaded = false
   }
 
-  return { app, repositories, pending, error, load, create, install, loadRepositories, disconnect }
+  return { app, repositories, pending, error, load, create, install, connectExisting, loadRepositories, disconnect }
 }

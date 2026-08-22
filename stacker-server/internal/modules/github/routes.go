@@ -31,6 +31,7 @@ func (m *Module) RegisterPublicRoutes(api *gin.RouterGroup) {
 func (m *Module) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/github", m.handler.current)
 	api.POST("/github/apps", m.handler.start)
+	api.POST("/github/apps/existing", m.handler.connectExisting)
 	api.GET("/github/repositories", m.handler.repositories)
 	api.DELETE("/github", m.handler.remove)
 }

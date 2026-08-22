@@ -40,6 +40,44 @@ func NewService(repo *RepositoryStore, log *slog.Logger) *Service {
 
 func (s *Service) Current() (App, error) { return s.repo.Current() }
 
+func (s *Service) ConnectExisting(ctx context.Context, req ExistingAppRequest) (App, error) {
+	name := strings.TrimSpace(req.Name)
+	if !appNamePattern.MatchString(name) {
+		return App{}, ErrInvalidName
+	}
+	if req.AppID <= 0 || req.InstallationID <= 0 || strings.TrimSpace(req.PrivateKey) == "" || strings.TrimSpace(req.WebhookSecret) == "" {
+		return App{}, ErrInvalidExistingApp
+	}
+
+	app := App{
+		ID:             randomHex(12),
+		Name:           name,
+		AppID:          req.AppID,
+		InstallationID: req.InstallationID,
+		PrivateKey:     strings.TrimSpace(req.PrivateKey),
+		WebhookSecret:  strings.TrimSpace(req.WebhookSecret),
+	}
+	token, err := s.appJWT(app)
+	if err != nil {
+		return App{}, ErrInvalidExistingApp
+	}
+	var installation struct {
+		Account             struct{ Login, Type string }
+		RepositorySelection string `json:"repository_selection"`
+	}
+	endpoint := fmt.Sprintf("%s/app/installations/%d", s.apiURL, app.InstallationID)
+	if err := s.do(ctx, http.MethodGet, endpoint, token, nil, &installation); err != nil {
+		return App{}, err
+	}
+	app.AccountLogin = installation.Account.Login
+	app.AccountType = installation.Account.Type
+	app.RepositoryMode = installation.RepositorySelection
+	if err := s.repo.Replace(&app); err != nil {
+		return App{}, err
+	}
+	return app, nil
+}
+
 func (s *Service) Start(req CreateRequest) (ManifestStart, error) {
 	name := strings.TrimSpace(req.Name)
 	if !appNamePattern.MatchString(name) {

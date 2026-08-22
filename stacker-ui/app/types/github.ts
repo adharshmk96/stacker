@@ -24,3 +24,11 @@ export interface GitHubManifestStart {
   url: string
   manifest: Record<string, unknown>
 }
+
+export interface ExistingGitHubApp {
+  name: string
+  appId: number | null
+  installationId: number | null
+  privateKey: string
+  webhookSecret: string
+}

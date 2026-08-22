@@ -64,6 +64,20 @@ func (h *Handler) start(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": result})
 }
 
+func (h *Handler) connectExisting(c *gin.Context) {
+	var req ExistingAppRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	app, err := h.service.ConnectExisting(c.Request.Context(), req)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": app})
+}
+
 func (h *Handler) repositories(c *gin.Context) {
 	repos, err := h.service.Repositories(c.Request.Context())
 	if err != nil {
@@ -193,7 +207,7 @@ func respondError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrInvalidName), errors.Is(err, ErrInvalidBaseURL), errors.Is(err, ErrInvalidCallback), errors.Is(err, ErrNotInstalled):
+	case errors.Is(err, ErrInvalidName), errors.Is(err, ErrInvalidBaseURL), errors.Is(err, ErrInvalidCallback), errors.Is(err, ErrNotInstalled), errors.Is(err, ErrInvalidExistingApp):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		c.Error(err)

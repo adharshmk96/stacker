@@ -5,8 +5,11 @@ const github = useGitHub()
 const name = ref(`stacker-${window.location.hostname.replace(/[^a-z0-9-]/gi, '-')}`)
 const organization = ref('')
 const submitting = ref(false)
+const setupMode = ref<'create' | 'existing'>('create')
+const existing = reactive({ name: '', appId: null as number | null, installationId: null as number | null, privateKey: '', webhookSecret: '' })
 const created = computed(() => Boolean(github.app.value?.appId))
 const connected = computed(() => Boolean(github.app.value?.installationId))
+const webhookURL = computed(() => `${window.location.origin}/api/github/webhooks`)
 
 onMounted(async () => {
   await github.load()
@@ -22,6 +25,30 @@ async function createApp() {
     toast.add({ title: 'Could not create GitHub App', description: err.message, color: 'error' })
     submitting.value = false
   }
+}
+
+async function connectExisting() {
+  submitting.value = true
+  try {
+    await github.connectExisting({
+      name: existing.name,
+      appId: existing.appId ?? 0,
+      installationId: existing.installationId ?? 0,
+      privateKey: existing.privateKey,
+      webhookSecret: existing.webhookSecret
+    })
+    toast.add({ title: 'GitHub connected', description: 'Repository access is ready.', color: 'success' })
+  } catch (err: any) {
+    toast.add({ title: 'Could not connect GitHub App', description: err.message, color: 'error' })
+  } finally {
+    submitting.value = false
+  }
+}
+
+function generateWebhookSecret() {
+  const bytes = new Uint8Array(24)
+  crypto.getRandomValues(bytes)
+  existing.webhookSecret = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 async function disconnect() {
@@ -86,7 +113,13 @@ const formatDate = (value: string) => new Date(value).toLocaleDateString(undefin
       <UButton label="Start over" color="neutral" variant="ghost" size="sm" @click="disconnect" />
     </div>
 
-    <form v-else class="mx-auto max-w-lg space-y-4 rounded-md border border-dashed border-default p-5" @submit.prevent="createApp">
+    <div v-else class="mx-auto max-w-2xl space-y-4 rounded-md border border-dashed border-default p-5">
+      <div class="grid gap-2 sm:grid-cols-2">
+        <UButton label="Create a new App" icon="i-lucide-plus" :color="setupMode === 'create' ? 'primary' : 'neutral'" :variant="setupMode === 'create' ? 'solid' : 'soft'" block @click="setupMode = 'create'" />
+        <UButton label="Already installed" icon="i-lucide-plug-zap" :color="setupMode === 'existing' ? 'primary' : 'neutral'" :variant="setupMode === 'existing' ? 'solid' : 'soft'" block @click="setupMode = 'existing'" />
+      </div>
+
+      <form v-if="setupMode === 'create'" class="space-y-4" @submit.prevent="createApp">
       <UFormField label="GitHub App name" help="Must be unique across GitHub.">
         <UInput v-model="name" class="w-full" required maxlength="100" placeholder="stacker-my-server" />
       </UFormField>
@@ -95,6 +128,44 @@ const formatDate = (value: string) => new Date(value).toLocaleDateString(undefin
       </UFormField>
       <UButton type="submit" block label="Create GitHub App" icon="i-lucide-github" :loading="submitting" />
       <p class="text-center text-xs text-dimmed">You will continue on GitHub, then return here to install the app.</p>
-    </form>
+      </form>
+
+      <form v-else class="space-y-4" @submit.prevent="connectExisting">
+        <div class="rounded-md border border-default bg-elevated/40 p-4 text-sm text-muted">
+          <p class="font-medium text-highlighted">Connect an existing GitHub App</p>
+          <p class="mt-1">Paste its credentials once. They stay on this Stacker server and are used only to create short-lived repository tokens.</p>
+        </div>
+        <UFormField label="GitHub App name" help="The name shown in GitHub App settings.">
+          <UInput v-model="existing.name" class="w-full" required maxlength="100" placeholder="my-deployment-app" />
+        </UFormField>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <UFormField label="App ID" help="GitHub App settings → General.">
+            <UInput v-model.number="existing.appId" class="w-full" type="number" min="1" required placeholder="123456" />
+          </UFormField>
+          <UFormField label="Installation ID" help="The number in GitHub's installation URL.">
+            <UInput v-model.number="existing.installationId" class="w-full" type="number" min="1" required placeholder="12345678" />
+          </UFormField>
+        </div>
+        <UFormField label="Private key" help="GitHub App settings → General → Private keys. Generate a new key if needed.">
+          <UTextarea v-model="existing.privateKey" class="w-full font-mono text-xs" :rows="5" required placeholder="-----BEGIN RSA PRIVATE KEY-----" />
+        </UFormField>
+        <UFormField label="Webhook secret" help="Must exactly match the secret configured for this GitHub App.">
+          <div class="flex gap-2">
+            <UInput v-model="existing.webhookSecret" class="min-w-0 flex-1" type="password" required autocomplete="off" />
+            <UButton label="Generate" color="neutral" variant="soft" type="button" @click="generateWebhookSecret" />
+          </div>
+        </UFormField>
+        <div class="rounded-md border border-default p-4 text-sm text-muted">
+          <p class="font-medium text-highlighted">Configure the App on GitHub</p>
+          <ol class="mt-2 list-decimal space-y-1 ps-5">
+            <li>In <strong>General</strong>, set the Homepage URL to <code>{{ window.location.origin }}</code>.</li>
+            <li>Enable webhooks and set the Payload URL to <code>{{ webhookURL }}</code>; paste the same webhook secret above.</li>
+            <li>Set repository permissions: Contents <strong>Read-only</strong>, Metadata <strong>Read-only</strong>, Pull requests <strong>Read-only</strong>; subscribe to <strong>Push</strong>.</li>
+            <li>Install the App for the account or organisation and copy its Installation ID from the URL.</li>
+          </ol>
+        </div>
+        <UButton type="submit" block label="Connect existing GitHub App" icon="i-lucide-link" :loading="submitting" />
+      </form>
+    </div>
   </SettingsSection>
 </template>

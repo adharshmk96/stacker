@@ -1,8 +1,11 @@
 package github
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -19,6 +22,38 @@ func testService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	return NewService(NewRepositoryStore(db), slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func TestConnectExistingApp(t *testing.T) {
+	srv := githubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/app/installations/42" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"account":              map[string]string{"login": "acme", "type": "Organization"},
+			"repository_selection": "selected",
+		})
+	})
+	service := testService(t)
+	attachAPI(service, srv)
+	app, err := service.ConnectExisting(context.Background(), ExistingAppRequest{
+		Name: "Existing App", AppID: 7, InstallationID: 42,
+		PrivateKey: pkcs8PEM(t), WebhookSecret: "webhook-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.AccountLogin != "acme" || app.RepositoryMode != "selected" {
+		t.Fatalf("unexpected app: %+v", app)
+	}
+}
+
+func TestConnectExistingRejectsInvalidCredentials(t *testing.T) {
+	service := testService(t)
+	if _, err := service.ConnectExisting(context.Background(), ExistingAppRequest{Name: "App"}); err != ErrInvalidExistingApp {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func TestStartBuildsPersonalManifest(t *testing.T) {

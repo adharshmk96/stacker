@@ -27,6 +27,17 @@ type CreateRequest struct {
 	Organization string `json:"organization" binding:"omitempty,max=100"`
 }
 
+// ExistingAppRequest connects an App that was created outside Stacker. GitHub
+// only lets an installation mint repository tokens when Stacker has the App ID
+// and its private key; the display name alone is not enough to authenticate.
+type ExistingAppRequest struct {
+	Name           string `json:"name" binding:"required,min=1,max=100"`
+	AppID          int64  `json:"appId" binding:"required,gt=0"`
+	InstallationID int64  `json:"installationId" binding:"required,gt=0"`
+	PrivateKey     string `json:"privateKey" binding:"required"`
+	WebhookSecret  string `json:"webhookSecret" binding:"required,max=500"`
+}
+
 type ManifestStart struct {
 	URL      string         `json:"url"`
 	Manifest map[string]any `json:"manifest"`
