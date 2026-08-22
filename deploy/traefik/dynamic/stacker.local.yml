@@ -1,0 +1,12 @@
+http:
+  routers:
+    stacker:
+      rule: "Host(`__STACKER_HOST__`)"
+      entryPoints:
+        - web
+      service: stacker
+  services:
+    stacker:
+      loadBalancer:
+        servers:
+          - url: http://stacker:8080

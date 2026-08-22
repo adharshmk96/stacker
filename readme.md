@@ -10,8 +10,13 @@ Run as root on a clean Linux VPS:
 curl -fsSL https://raw.githubusercontent.com/adharshmk96/stacker/main/install.sh | sudo bash
 ```
 
-The installer adds Docker when needed, initialises Swarm, builds Stacker from
-source, and deploys Stacker plus Traefik. It prints the generated HTTPS URL.
+On first install, the installer asks whether to run locally at
+`http://127.0.0.1`, use an instant `sslip.io` hostname with HTTPS, or configure
+a custom HTTPS domain. It detects a public IPv4 address and recommends
+QuickStart when available; without one it defaults to Local. Later runs do not
+ask again and preserve the configured Traefik domain. The installer adds Docker
+when needed, initialises Swarm, builds Stacker from source, and deploys Stacker
+plus Traefik.
 Rerunning the same command safely rebuilds and upgrades Stacker, then restarts
 both Stacker and Traefik. Existing Docker volumes, Traefik configuration,
 configured domains, certificates, and other running stacks are preserved.

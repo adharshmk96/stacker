@@ -70,6 +70,7 @@ local_ip() {
 
 public_ip() {
   if [ -n "${PUBLIC_IP:-}" ]; then
+    [[ "$PUBLIC_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "PUBLIC_IP must be an IPv4 address"
     printf '%s\n' "$PUBLIC_IP"
     return
   fi
@@ -77,7 +78,7 @@ public_ip() {
   local address
   address="$(curl -4fsS --max-time 8 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | awk -F= '$1 == "ip" {print $2; exit}')"
   [ -n "$address" ] || address="$(curl -4fsS --max-time 8 https://api.ipify.org 2>/dev/null || true)"
-  [[ "$address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "could not detect the public IPv4 address; rerun with PUBLIC_IP=x.x.x.x"
+  [[ "$address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
   printf '%s\n' "$address"
 }
 
@@ -125,7 +126,8 @@ resolve_source() {
 }
 
 populate_traefik_config() {
-  local source_dir="$1" host="$2"
+  local source_dir="$1" host="$2" setup_mode="$3"
+  local static_config="traefik.yml" dynamic_config="stacker.yml"
   RENDER_TMP="$(mktemp -d)"
   docker volume create stacker-traefik-config </dev/null >/dev/null
   docker volume create stacker-traefik-data </dev/null >/dev/null
@@ -139,9 +141,14 @@ populate_traefik_config() {
     alpine:3.23 sh -c 'find /target -mindepth 1 -print -quit | grep -q .' </dev/null; then
     log "Keeping existing Traefik configuration"
   else
+    if [ "$setup_mode" = "local" ]; then
+      static_config="traefik.local.yml"
+      dynamic_config="stacker.local.yml"
+    fi
+
     mkdir -p "$RENDER_TMP/dynamic"
-    cp "$source_dir/deploy/traefik/traefik.yml" "$RENDER_TMP/traefik.yml"
-    sed "s/__STACKER_HOST__/$host/g" "$source_dir/deploy/traefik/dynamic/stacker.yml" > "$RENDER_TMP/dynamic/stacker.yml"
+    cp "$source_dir/deploy/traefik/$static_config" "$RENDER_TMP/traefik.yml"
+    sed "s/__STACKER_HOST__/$host/g" "$source_dir/deploy/traefik/dynamic/$dynamic_config" > "$RENDER_TMP/dynamic/stacker.yml"
 
     log "Initialising Traefik configuration"
     docker run --rm \
@@ -155,6 +162,61 @@ populate_traefik_config() {
   # has to exist at the same path outside the stacker container as inside it.
   mkdir -p /var/lib/stacker/workspaces
   chmod 700 /var/lib/stacker/workspaces
+}
+
+is_valid_host() {
+  [[ "$1" =~ ^[a-zA-Z0-9.-]+$ ]]
+}
+
+read_setup_choice() {
+  local public_address="$1" choice custom_host
+
+  if ! { : </dev/tty; } 2>/dev/null; then
+    if [ -n "$public_address" ]; then
+      printf 'quickstart\n'
+    else
+      printf 'local\n'
+    fi
+    return
+  fi
+
+  printf '\nHow would you like to set up Stacker?\n' >/dev/tty
+  printf '1) Local       — run on this machine via 127.0.0.1\n' >/dev/tty
+  if [ -n "$public_address" ]; then
+    printf '2) QuickStart  — instant %s.sslip.io domain + automatic HTTPS [recommended]\n' "$public_address" >/dev/tty
+  else
+    printf '2) QuickStart  — requires a public IPv4 address\n' >/dev/tty
+  fi
+  printf '3) Custom Domain — start with your domain + automatic HTTPS\n\n' >/dev/tty
+  if [ -n "$public_address" ]; then
+    printf 'Public IP detected: %s — QuickStart is recommended.\n' "$public_address" >/dev/tty
+    printf 'Choose [2]: ' >/dev/tty
+  else
+    printf 'No public IP detected — Local is recommended.\n' >/dev/tty
+    printf 'Choose [1]: ' >/dev/tty
+  fi
+  IFS= read -r choice </dev/tty || choice=""
+
+  case "$choice" in
+    1|local|Local) printf 'local\n' ;;
+    2|quickstart|QuickStart)
+      [ -n "$public_address" ] || die "QuickStart requires a public IPv4 address; choose Local or Custom Domain"
+      printf 'quickstart\n'
+      ;;
+    3|custom|Custom)
+      while :; do
+        printf 'Domain: ' >/dev/tty
+        IFS= read -r custom_host </dev/tty || die "a custom domain is required"
+        is_valid_host "$custom_host" || { printf 'Enter a valid DNS hostname.\n' >/dev/tty; continue; }
+        printf 'custom:%s\n' "$custom_host"
+        return
+      done
+      ;;
+    '')
+      [ -n "$public_address" ] && printf 'quickstart\n' || printf 'local\n'
+      ;;
+    *) die "choose 1, 2, or 3" ;;
+  esac
 }
 
 deploy() {
@@ -193,30 +255,42 @@ main() {
   install_base_tools
   ensure_docker
 
-  local advertise_addr host installed_host
+  local advertise_addr host installed_host public_address setup_mode setup_choice scheme
   advertise_addr="$(local_ip)"
   installed_host="$(installed_stacker_host)"
 
   if [ -n "${STACKER_HOST:-}" ]; then
     host="$STACKER_HOST"
+    setup_mode="custom"
   elif [ -n "$installed_host" ]; then
     host="$installed_host"
+    setup_mode="existing"
     log "Preserving configured domain: $installed_host"
   else
-    host="stacker.$(public_ip).sslip.io"
+    public_address="$(public_ip || true)"
+    setup_choice="$(read_setup_choice "$public_address")"
+    setup_mode="${setup_choice%%:*}"
+    case "$setup_mode" in
+      local) host="127.0.0.1" ;;
+      quickstart) host="$public_address.sslip.io" ;;
+      custom) host="${setup_choice#custom:}" ;;
+      *) die "unknown setup mode: $setup_mode" ;;
+    esac
   fi
 
   [[ "$STACK_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || die "STACKER_STACK_NAME contains invalid characters"
-  [[ "$host" =~ ^[a-zA-Z0-9.-]+$ ]] || die "STACKER_HOST must be a DNS hostname"
+  is_valid_host "$host" || die "STACKER_HOST must be a DNS hostname"
   [[ "$advertise_addr" =~ ^[a-zA-Z0-9.:_-]+$ ]] || die "ADVERTISE_ADDR contains invalid characters"
   [[ "$IMAGE" =~ ^[a-zA-Z0-9./:_-]+$ ]] || die "STACKER_IMAGE contains invalid characters"
 
   ensure_swarm_manager "$advertise_addr"
   resolve_source
-  populate_traefik_config "$SOURCE_DIR" "$host"
+  populate_traefik_config "$SOURCE_DIR" "$host" "$setup_mode"
   deploy "$SOURCE_DIR" "$advertise_addr" "$host"
 
-  log "Stacker is installed: https://$host"
+  scheme="https"
+  [ "$setup_mode" = "local" ] && scheme="http"
+  log "Stacker is installed: $scheme://$host"
   log "Rerun this installer at any time to reconcile or upgrade the deployment."
 }
 
