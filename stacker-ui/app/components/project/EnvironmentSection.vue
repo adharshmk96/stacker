@@ -15,6 +15,8 @@ const props = defineProps<{
   showHost?: boolean
   /** The create form requires one routable host for every environment. */
   hostRequired?: boolean
+  /** Services parsed from the pasted compose file for the host target picker. */
+  serviceItems?: { label: string, value: string }[]
 }>()
 
 /* ---- inline host ---- */
@@ -178,7 +180,16 @@ function applyBulk() {
         </UFormField>
 
         <UFormField label="Service" name="env.service">
-          <UInput v-model="service" placeholder="web" class="w-full font-mono" />
+          <USelectMenu
+            v-if="serviceItems?.length"
+            v-model="service"
+            :items="serviceItems"
+            value-key="value"
+            searchable
+            placeholder="Search services"
+            class="w-full font-mono"
+          />
+          <UInput v-else v-model="service" placeholder="web" class="w-full font-mono" />
         </UFormField>
 
         <UFormField label="Port">

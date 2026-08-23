@@ -43,6 +43,10 @@ onMounted(async () => {
 })
 
 const isGit = computed(() => state.sourceKind === 'git')
+const composeServices = computed(() => composePreview(state.compose).services.map(service => ({
+  label: service.name,
+  value: service.name
+})))
 
 const selectedEnvId = ref(state.environments[0]!.id)
 
@@ -160,6 +164,8 @@ function onSubmit(event: FormSubmitEvent<ProjectPayload>) {
       <ProjectSourceSection :draft="state" />
     </section>
 
+    <ProjectComposePreview :draft="state" />
+
     <section class="rounded-lg border border-default bg-default/60 p-5 backdrop-blur">
       <header class="mb-4">
         <h2 class="text-sm font-semibold text-highlighted">Environments</h2>
@@ -183,6 +189,7 @@ function onSubmit(event: FormSubmitEvent<ProjectPayload>) {
         :environment="selectedEnv"
         :default-branch="state.git.branch"
         :show-branch="isGit"
+        :service-items="composeServices"
         show-host
         host-required
       />
