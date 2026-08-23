@@ -9,7 +9,10 @@ const setupMode = ref<'create' | 'existing'>('create')
 const existing = reactive({ name: '', appId: null as number | null, installationId: null as number | null, privateKey: '', webhookSecret: '' })
 const created = computed(() => Boolean(github.app.value?.appId))
 const connected = computed(() => Boolean(github.app.value?.installationId))
-const webhookURL = computed(() => `${window.location.origin}/api/github/webhooks`)
+// `window` is not in scope inside a template, so the origin has to reach it
+// through the instance or the whole form fails to render.
+const origin = computed(() => window.location.origin)
+const webhookURL = computed(() => `${origin.value}/api/github/webhooks`)
 
 onMounted(async () => {
   await github.load()
@@ -158,7 +161,7 @@ const formatDate = (value: string) => new Date(value).toLocaleDateString(undefin
         <div class="rounded-md border border-default p-4 text-sm text-muted">
           <p class="font-medium text-highlighted">Configure the App on GitHub</p>
           <ol class="mt-2 list-decimal space-y-1 ps-5">
-            <li>In <strong>General</strong>, set the Homepage URL to <code>{{ window.location.origin }}</code>.</li>
+            <li>In <strong>General</strong>, set the Homepage URL to <code>{{ origin }}</code>.</li>
             <li>Enable webhooks and set the Payload URL to <code>{{ webhookURL }}</code>; paste the same webhook secret above.</li>
             <li>Set repository permissions: Contents <strong>Read-only</strong>, Metadata <strong>Read-only</strong>, Pull requests <strong>Read-only</strong>; subscribe to <strong>Push</strong>.</li>
             <li>Install the App for the account or organisation and copy its Installation ID from the URL.</li>
