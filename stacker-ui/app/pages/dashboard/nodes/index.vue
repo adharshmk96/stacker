@@ -349,6 +349,7 @@ function rowActions(node: Node): DropdownMenuItem[][] {
   if (node.local) {
     return [
       [
+        { label: 'View details', icon: 'i-lucide-arrow-up-right', to: `/dashboard/nodes/${node.id}/overview` },
         { label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => onEdit(node) },
         { label: 'Open terminal', icon: 'i-lucide-terminal', onSelect: () => onTerminal(node) }
       ],
@@ -358,6 +359,7 @@ function rowActions(node: Node): DropdownMenuItem[][] {
 
   return [
     [
+      { label: 'View details', icon: 'i-lucide-arrow-up-right', to: `/dashboard/nodes/${node.id}/overview` },
       { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => onEdit(node) },
       {
         label: 'Check status',
@@ -632,7 +634,10 @@ const formatDate = (value: string) =>
         :ui="{ tr: 'transition-colors hover:bg-elevated/40' }"
       >
         <template #name-cell="{ row }">
-          <div class="flex items-center gap-3">
+          <NuxtLink
+            :to="`/dashboard/nodes/${row.original.id}/overview`"
+            class="flex items-center gap-3"
+          >
             <div class="relative flex size-8 items-center justify-center rounded-md bg-elevated ring-1 ring-default">
               <UIcon
                 :name="row.original.local ? 'i-lucide-monitor' : 'i-lucide-server'"
@@ -645,7 +650,7 @@ const formatDate = (value: string) =>
               />
             </div>
             <div class="leading-tight">
-              <p class="flex items-center gap-2 font-medium text-highlighted">
+              <p class="flex items-center gap-2 font-medium text-highlighted hover:underline">
                 {{ row.original.name }}
                 <UBadge v-if="row.original.local" label="This machine" color="neutral" variant="subtle" size="sm" />
               </p>
@@ -665,7 +670,7 @@ const formatDate = (value: string) =>
                 <span class="font-mono text-dimmed">{{ row.original.id }}</span>
               </p>
             </div>
-          </div>
+          </NuxtLink>
         </template>
 
         <template #ssh-cell="{ row }">
