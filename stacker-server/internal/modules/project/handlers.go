@@ -52,6 +52,21 @@ func (h *Handler) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": item})
 }
 
+func (h *Handler) composePreview(c *gin.Context) {
+	var req ComposePreviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	compose, err := h.service.PreviewCompose(c.Request.Context(), req.Git)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"compose": compose}})
+}
+
 func (h *Handler) update(c *gin.Context) {
 	var req WriteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

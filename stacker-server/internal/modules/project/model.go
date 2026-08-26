@@ -300,6 +300,13 @@ type WriteRequest struct {
 	Environments []EnvironmentRequest `json:"environments" binding:"required,min=1,dive"`
 }
 
+// ComposePreviewRequest identifies a Compose file in a Git repository before a
+// project exists. It deliberately contains no project or environment settings:
+// reading it must not create a deployment or persistent workspace.
+type ComposePreviewRequest struct {
+	Git GitSource `json:"git" binding:"required"`
+}
+
 // DeployRequest is the payload for a manual deploy. Both fields are optional —
 // the button sends neither.
 type DeployRequest struct {

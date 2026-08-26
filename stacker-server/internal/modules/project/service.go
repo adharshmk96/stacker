@@ -255,6 +255,43 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(id)
 }
 
+// PreviewCompose reads a selected repository's Compose file in an ephemeral
+// checkout. The browser needs its service names before it can configure a host,
+// but no project or deployment should be created merely by opening that list.
+func (s *Service) PreviewCompose(ctx context.Context, git GitSource) (string, error) {
+	git.Repo = strings.TrimSpace(git.Repo)
+	git.Branch = strings.TrimSpace(git.Branch)
+	git.ComposePath = strings.TrimSpace(git.ComposePath)
+	if git.Repo == "" {
+		return "", ErrRepoRequired
+	}
+	if git.Branch == "" {
+		return "", ErrBranchRequired
+	}
+	if git.ComposePath == "" {
+		return "", ErrComposePath
+	}
+	if err := os.MkdirAll(s.engine.workRoot, 0o700); err != nil {
+		return "", err
+	}
+
+	workspace, err := os.MkdirTemp(s.engine.workRoot, ".preview-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(workspace) //nolint:errcheck // it is an isolated preview checkout
+
+	item := Project{SourceKind: SourceGit, Git: git}
+	_, _, compose, err := s.engine.source(ctx, &run{}, item, Environment{}, workspace, "")
+	if err != nil {
+		return "", err
+	}
+	if _, err := parseCompose(compose); err != nil {
+		return "", err
+	}
+	return compose, nil
+}
+
 // build turns a write request into a Project, validating as it goes.
 //
 // `previous` is the stored environment set on an update, and nil on a create. It

@@ -32,6 +32,7 @@ func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
 	projects := r.Group("/projects")
 	projects.GET("", m.handler.list)
 	projects.POST("", m.handler.create)
+	projects.POST("/compose-preview", m.handler.composePreview)
 	// Ahead of /:id so `status` is not read as a project id.
 	projects.GET("/status", m.handler.statusAll)
 

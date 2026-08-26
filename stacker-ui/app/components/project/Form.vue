@@ -43,10 +43,51 @@ onMounted(async () => {
 })
 
 const isGit = computed(() => state.sourceKind === 'git')
-const composeServices = computed(() => composePreview(state.compose).services.map(service => ({
+const gitCompose = ref('')
+const gitPreviewPending = ref(false)
+const gitPreviewError = ref('')
+let gitPreviewTimer: ReturnType<typeof setTimeout> | undefined
+let gitPreviewRequest = 0
+
+const previewCompose = computed(() => isGit.value ? gitCompose.value : state.compose)
+const composeServices = computed(() => composePreview(previewCompose.value).services.map(service => ({
   label: service.name,
   value: service.name
 })))
+
+/** Read the exact branch/path selected in the form, after typing has paused. */
+watch(
+  [() => state.sourceKind, () => state.git.repo, () => state.git.branch, () => state.git.composePath],
+  () => {
+    clearTimeout(gitPreviewTimer)
+    // Invalidate an in-flight request before deciding whether the new fields
+    // are complete enough to start another one.
+    const request = ++gitPreviewRequest
+    gitCompose.value = ''
+    gitPreviewError.value = ''
+    if (!isGit.value || !state.git.repo.trim() || !state.git.branch.trim() || !state.git.composePath.trim()) {
+      gitPreviewPending.value = false
+      return
+    }
+
+    gitPreviewPending.value = true
+    gitPreviewTimer = setTimeout(async () => {
+      try {
+        const result = await useApi().post<{ compose: string }>('/projects/compose-preview', { git: state.git })
+        if (request === gitPreviewRequest) gitCompose.value = result.compose
+      } catch (error) {
+        if (request === gitPreviewRequest) {
+          gitPreviewError.value = error instanceof Error ? error.message : 'Could not read the compose file.'
+        }
+      } finally {
+        if (request === gitPreviewRequest) gitPreviewPending.value = false
+      }
+    }, 350)
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => clearTimeout(gitPreviewTimer))
 
 const selectedEnvId = ref(state.environments[0]!.id)
 
@@ -164,7 +205,12 @@ function onSubmit(event: FormSubmitEvent<ProjectPayload>) {
       <ProjectSourceSection :draft="state" />
     </section>
 
-    <ProjectComposePreview :draft="state" />
+    <ProjectComposePreview
+      :draft="state"
+      :compose="previewCompose"
+      :loading="gitPreviewPending"
+      :error="gitPreviewError"
+    />
 
     <section class="rounded-lg border border-default bg-default/60 p-5 backdrop-blur">
       <header class="mb-4">

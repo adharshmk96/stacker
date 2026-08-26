@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import type { ProjectPayload } from '~/types/project'
 
-const props = defineProps<{ draft: ProjectPayload }>()
+const props = defineProps<{
+  draft: ProjectPayload
+  /** The pasted file or the temporary read from the selected Git source. */
+  compose?: string
+  loading?: boolean
+  error?: string
+}>()
 
-const preview = computed(() => props.draft.sourceKind === 'compose'
-  ? composePreview(props.draft.compose)
-  : { services: [] })
+const preview = computed(() => composePreview(props.compose ?? props.draft.compose))
 </script>
 
 <template>
@@ -15,9 +19,8 @@ const preview = computed(() => props.draft.sourceKind === 'compose'
       <p class="text-sm text-muted">Services and deployment metadata detected from the compose file.</p>
     </header>
 
-    <p v-if="draft.sourceKind === 'git'" class="text-sm text-dimmed">
-      The compose file is read from the repository when the project deploys. Paste a compose file to preview it here.
-    </p>
+    <p v-if="loading" class="text-sm text-dimmed">Reading the compose file from the repository…</p>
+    <p v-else-if="error" class="text-sm text-error">{{ error }}</p>
     <p v-else-if="preview.error" class="text-sm text-error">{{ preview.error }}</p>
     <p v-else-if="!preview.services.length" class="text-sm text-dimmed">Paste a compose file to see its services.</p>
     <div v-else class="space-y-2">
