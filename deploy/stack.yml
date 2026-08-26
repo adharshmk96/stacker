@@ -42,9 +42,6 @@ services:
       STACKER_WORK_ROOT: /var/lib/stacker/workspaces
       STACKER_ADVERTISE_ADDR: __STACKER_ADVERTISE_ADDR__
       STACKER_STACK_NAME: __STACKER_STACK_NAME__
-      # Private-only service on the monitoring overlay. The browser never
-      # reaches VictoriaMetrics directly; the API validates every query.
-      STACKER_METRICS_URL: http://__STACKER_STACK_NAME___victoriametrics:8428
       STACKER_TRAEFIK_DYNAMIC_PATH: /etc/stacker/traefik/dynamic/stacker.yml
     volumes:
       - stacker-data:/data
@@ -53,69 +50,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - proxy
-      - monitoring
-    deploy:
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: on-failure
-
-  # Host metrics. One task runs on each Swarm node and exposes only to the
-  # internal monitoring network.
-  node-exporter:
-    image: prom/node-exporter:v1.9.1
-    # The API queries host metrics by immutable Swarm node id. node_exporter
-    # includes this task hostname as its `nodename` label.
-    hostname: "{{.Node.ID}}"
-    command:
-      - --path.rootfs=/host
-      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+)($$|/)
-    volumes:
-      - /:/host:ro,rslave
-    networks:
-      - monitoring
-    deploy:
-      mode: global
-      restart_policy:
-        condition: on-failure
-
-  # Docker/container metrics. This is deliberately internal and read-only
-  # except for the Docker socket required to enumerate containers.
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.52.1
-    command:
-      - --docker_only=true
-      - --housekeeping_interval=30s
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker:/var/lib/docker:ro
-      - /dev/disk:/dev/disk:ro
-    networks:
-      - monitoring
-    deploy:
-      mode: global
-      restart_policy:
-        condition: on-failure
-
-  # A single persistent time-series database is pinned to a manager because
-  # named volumes are node-local. 30 days is sufficient for the node detail UI.
-  victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.111.0
-    command:
-      - -retentionPeriod=30d
-      - -storage.minFreeDiskSpaceBytes=2GB
-      - -promscrape.config=/etc/victoriametrics/scrape.yml
-    configs:
-      - source: victoriametrics-scrape
-        target: /etc/victoriametrics/scrape.yml
-    volumes:
-      - victoriametrics-data:/storage
-    networks:
-      - monitoring
     deploy:
       replicas: 1
       placement:
@@ -128,13 +62,6 @@ networks:
   proxy:
     driver: overlay
     attachable: true
-  monitoring:
-    driver: overlay
-    attachable: false
-
-configs:
-  victoriametrics-scrape:
-    file: ./victoriametrics-scrape.yml
 
 volumes:
   stacker-data:
@@ -145,7 +72,4 @@ volumes:
     external: true
   traefik-data:
     name: stacker-traefik-data
-    external: true
-  victoriametrics-data:
-    name: stacker-victoriametrics-data
     external: true

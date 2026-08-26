@@ -36,9 +36,6 @@ type Config struct {
 	TraefikDynamicPath string
 	// StackName prefixes the two Swarm services managed by the Server settings page.
 	StackName string
-	// MetricsURL is the private VictoriaMetrics endpoint. It is intentionally
-	// empty in local development, where monitoring is not installed.
-	MetricsURL string
 }
 
 // Load builds the config from the environment, falling back to the
@@ -57,7 +54,6 @@ func Load() (Config, error) {
 		AdvertiseAddr:      env("STACKER_ADVERTISE_ADDR", ""),
 		TraefikDynamicPath: env("STACKER_TRAEFIK_DYNAMIC_PATH", "/etc/stacker/traefik/dynamic/stacker.yml"),
 		StackName:          env("STACKER_STACK_NAME", "stacker"),
-		MetricsURL:         env("STACKER_METRICS_URL", ""),
 	}
 
 	// The key directory holds private keys — 0700 for both it and its parent.
