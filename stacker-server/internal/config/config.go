@@ -36,6 +36,8 @@ type Config struct {
 	TraefikDynamicPath string
 	// StackName prefixes the two Swarm services managed by the Server settings page.
 	StackName string
+	// Host is the public hostname browsers use to reach stacker (STACKER_HOST).
+	Host string
 }
 
 // Load builds the config from the environment, falling back to the
@@ -54,6 +56,7 @@ func Load() (Config, error) {
 		AdvertiseAddr:      env("STACKER_ADVERTISE_ADDR", ""),
 		TraefikDynamicPath: env("STACKER_TRAEFIK_DYNAMIC_PATH", "/etc/stacker/traefik/dynamic/stacker.yml"),
 		StackName:          env("STACKER_STACK_NAME", "stacker"),
+		Host:               env("STACKER_HOST", ""),
 	}
 
 	// The key directory holds private keys — 0700 for both it and its parent.

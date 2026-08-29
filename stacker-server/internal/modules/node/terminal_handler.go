@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -34,7 +33,7 @@ var terminalUpgrader = websocket.Upgrader{
 	// Same stance as the API's CORS: stacker is reached from its own origin in
 	// production and from the Nuxt dev server in development, and the session
 	// token — not the origin — is what authorises the connection.
-	CheckOrigin: func(*http.Request) bool { return true },
+	CheckOrigin: terminalOriginAllowed,
 	// The token travels as a subprotocol because a browser cannot set headers
 	// on a websocket; echoing it back is what completes the handshake.
 	Subprotocols: []string{terminalSubprotocol},

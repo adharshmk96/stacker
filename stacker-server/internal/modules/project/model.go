@@ -170,16 +170,16 @@ type Deployment struct {
 	ID     string `gorm:"primaryKey;size:32" json:"id"`
 	Number int    `gorm:"not null;index" json:"number"`
 
-	ProjectID     string `gorm:"size:32;not null;index" json:"projectId"`
+	ProjectID     string `gorm:"size:32;not null;index:idx_deploy_project_started,priority:1" json:"projectId"`
 	ProjectName   string `gorm:"size:120;not null" json:"projectName"`
-	EnvironmentID string `gorm:"size:32;not null;index" json:"environmentId"`
+	EnvironmentID string `gorm:"size:32;not null;index:idx_deploy_env_status,priority:1" json:"environmentId"`
 	// Environment is the name, which is what the UI filters and groups on.
 	Environment string `gorm:"size:60;not null" json:"environment"`
 	// Stack is the swarm stack this run deployed, kept so a run can explain
 	// which stack it touched even after the environment is renamed.
 	Stack string `gorm:"size:120;not null;default:''" json:"stack"`
 
-	Status      DeploymentStatus `gorm:"size:16;not null;default:queued" json:"status"`
+	Status      DeploymentStatus `gorm:"size:16;not null;default:queued;index:idx_deploy_env_status,priority:2" json:"status"`
 	TriggeredBy TriggerKind      `gorm:"size:16;not null;default:manual" json:"triggeredBy"`
 	// Actor is who or what started the run — a user's email, or the trigger.
 	Actor string `gorm:"size:200;not null;default:''" json:"actor"`
@@ -191,7 +191,7 @@ type Deployment struct {
 	// full story is in the log.
 	Error string `gorm:"size:1000;not null;default:''" json:"error,omitempty"`
 
-	StartedAt   time.Time  `gorm:"not null" json:"startedAt"`
+	StartedAt   time.Time  `gorm:"not null;index:idx_deploy_project_started,priority:2" json:"startedAt"`
 	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
 	DurationSec *int       `json:"durationSec,omitempty"`
 

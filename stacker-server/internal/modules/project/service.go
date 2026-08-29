@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Service holds every decision this module makes. The handlers do HTTP, the
@@ -21,6 +22,7 @@ type Service struct {
 	status *statusReader
 	routes *router
 	log    *slog.Logger
+	cache  statusCache
 }
 
 // Options is what the module needs from the installation to be able to deploy.
@@ -429,6 +431,11 @@ func (s *Service) checkHosts(item Project) error {
 		mine[env.ID] = true
 	}
 
+	owners, err := s.repo.HostOwnerMap()
+	if err != nil {
+		return err
+	}
+
 	claimed := map[string]bool{}
 	for _, env := range item.Environments {
 		for _, domain := range env.Domains {
@@ -437,10 +444,7 @@ func (s *Service) checkHosts(item Project) error {
 			}
 			claimed[domain.Host] = true
 
-			owner, err := s.repo.HostOwner(domain.Host)
-			if err != nil {
-				return err
-			}
+			owner := owners[domain.Host]
 			if owner != "" && !mine[owner] {
 				return fmt.Errorf("%w: %s", ErrDomainTaken, domain.Host)
 			}
@@ -620,46 +624,84 @@ func (s *Service) Status(ctx context.Context, id string) (ProjectStatus, error) 
 	if err != nil {
 		return ProjectStatus{}, err
 	}
-	return s.statusOf(ctx, item, s.engine.Running())
-}
 
-// StatusAll reads every project's live state, for the card grid.
-//
-// One docker call per environment: that is a handful of local calls on the
-// installations this serves, and the alternative — one call for every service on
-// the host, then grouping — reads the state of stacks nobody asked about.
-func (s *Service) StatusAll(ctx context.Context) ([]ProjectStatus, error) {
-	items, err := s.repo.List()
-	if err != nil {
-		return nil, err
-	}
-
-	running := s.engine.Running()
-	out := make([]ProjectStatus, 0, len(items))
-	for _, item := range items {
-		status, err := s.statusOf(ctx, item, running)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, status)
-	}
-	return out, nil
-}
-
-func (s *Service) statusOf(ctx context.Context, item Project, running map[string]bool) (ProjectStatus, error) {
 	latest, err := s.repo.LatestByEnvironment(item.ID)
 	if err != nil {
 		return ProjectStatus{}, err
 	}
 
+	services, servicesErr := s.status.allServices(ctx)
+
+	return s.statusOf(item, s.engine.Running(), latest, services, servicesErr, timeNow())
+}
+
+// StatusAll reads every project's live state, for the card grid.
+//
+// Results are cached for a few seconds and docker is queried once per poll,
+// not once per environment.
+func (s *Service) StatusAll(ctx context.Context) ([]ProjectStatus, error) {
+	now := timeNow()
+	if cached, ok := s.cache.get(now); ok {
+		return cached, nil
+	}
+
+	items, err := s.repo.List()
+	if err != nil {
+		return nil, err
+	}
+
+	projectIDs := make([]string, len(items))
+	for i, item := range items {
+		projectIDs[i] = item.ID
+	}
+
+	latestAll, err := s.repo.LatestForProjects(projectIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	services, servicesErr := s.status.allServices(ctx)
+	if servicesErr != nil && len(items) == 0 {
+		return nil, servicesErr
+	}
+
+	running := s.engine.Running()
+	out := make([]ProjectStatus, 0, len(items))
+	for _, item := range items {
+		status, err := s.statusOf(item, running, latestAll[item.ID], services, servicesErr, now)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, status)
+	}
+
+	s.cache.set(now, out)
+	return out, nil
+}
+
+func (s *Service) statusOf(item Project, running map[string]bool, latest map[string]Deployment, services map[string][]dockerServiceRow, dockerErr error, checkedAt time.Time) (ProjectStatus, error) {
 	status := ProjectStatus{
 		ProjectID:    item.ID,
 		Environments: make([]EnvironmentStatus, 0, len(item.Environments)),
-		CheckedAt:    timeNow(),
+		CheckedAt:    checkedAt,
 	}
 
 	for _, env := range item.Environments {
-		envStatus := s.status.Environment(ctx, env, StackName(item, env), running[env.ID])
+		stack := StackName(item, env)
+		var envStatus EnvironmentStatus
+		if dockerErr != nil {
+			envStatus = EnvironmentStatus{
+				EnvironmentID: env.ID,
+				Name:          env.Name,
+				Stack:         stack,
+				Services:      []ServiceState{},
+				Domains:       hosts(env.Domains),
+				State:         RuntimeUnknown,
+				Message:       dockerErr.Error(),
+			}
+		} else {
+			envStatus = s.status.environmentFromRows(env, stack, services[stack], running[env.ID])
+		}
 		if deployment, ok := latest[env.ID]; ok {
 			envStatus.LastDeployment = &deployment
 			if status.LastDeployment == nil || deployment.StartedAt.After(status.LastDeployment.StartedAt) {

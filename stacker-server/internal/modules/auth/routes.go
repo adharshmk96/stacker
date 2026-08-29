@@ -2,6 +2,7 @@ package auth
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -16,9 +17,9 @@ type Module struct {
 
 // New wires the module's repository, service and handler. resetData may be nil,
 // which only disables the reset-everything endpoint.
-func New(db *gorm.DB, resetData ResetDataFunc, log *slog.Logger) (*Module, error) {
+func New(db *gorm.DB, mail MailSender, resetData ResetDataFunc, log *slog.Logger) (*Module, error) {
 	repo := NewRepository(db)
-	service, err := NewService(repo, resetData, log.With("module", "auth"))
+	service, err := NewService(repo, resetData, mail, log.With("module", "auth"))
 	if err != nil {
 		return nil, err
 	}
@@ -29,11 +30,13 @@ func New(db *gorm.DB, resetData ResetDataFunc, log *slog.Logger) (*Module, error
 // RegisterRoutes mounts the module under the given API group. The endpoints
 // split in two: the ones a signed-out browser must reach, and the rest.
 func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
+	authLimit := newIPLimiter(10, time.Minute)
+
 	public := r.Group("/auth")
+	public.POST("/login", authLimit, m.handler.login)
+	public.POST("/forgot-password", authLimit, m.handler.forgotPassword)
 	public.GET("/status", m.handler.status)
 	public.POST("/register", m.handler.register)
-	public.POST("/login", m.handler.login)
-	public.POST("/forgot-password", m.handler.forgotPassword)
 	public.POST("/reset-password", m.handler.resetPassword)
 
 	private := r.Group("/auth")

@@ -27,15 +27,28 @@ const filtered = computed(() => {
 const sourceLabel = (project: Project) =>
   project.sourceKind === 'git' ? project.git.repo : 'compose file'
 
-/** Task totals across a project's environments — the card's `3/4 tasks`. */
-function tasks(id: string) {
-  const status = statusOf(id)
-  if (!status) return null
+/** Pre-computed card data so the template does not re-scan status per binding. */
+const cardData = computed(() => {
+  const map = new Map<string, {
+    status: ReturnType<typeof statusOf>
+    tasks: { running: number, desired: number } | null
+  }>()
 
-  return status.environments.reduce(
-    (total, env) => ({ running: total.running + env.running, desired: total.desired + env.desired }),
-    { running: 0, desired: 0 })
-}
+  for (const project of filtered.value) {
+    const status = statusOf(project.id)
+    const tasks = status
+      ? status.environments.reduce(
+          (total, env) => ({ running: total.running + env.running, desired: total.desired + env.desired }),
+          { running: 0, desired: 0 }
+        )
+      : null
+    map.set(project.id, {
+      status,
+      tasks: tasks?.desired ? tasks : null
+    })
+  }
+  return map
+})
 
 const deleteTarget = ref<Project | null>(null)
 const deleting = ref(false)
@@ -152,9 +165,9 @@ const formatDate = (value: string) =>
             </div>
 
             <UBadge
-              v-if="statusOf(project.id)"
-              :label="runtimeStateLabel[statusOf(project.id)!.state]"
-              :color="runtimeStateColor[statusOf(project.id)!.state]"
+              v-if="cardData.get(project.id)?.status"
+              :label="runtimeStateLabel[cardData.get(project.id)!.status!.state]"
+              :color="runtimeStateColor[cardData.get(project.id)!.status!.state]"
               variant="subtle"
               size="sm"
             />
@@ -184,8 +197,8 @@ const formatDate = (value: string) =>
               class="font-mono text-[11px]"
             />
             <UBadge
-              v-if="tasks(project.id)?.desired"
-              :label="`${tasks(project.id)!.running}/${tasks(project.id)!.desired} tasks`"
+              v-if="cardData.get(project.id)?.tasks?.desired"
+              :label="`${cardData.get(project.id)!.tasks!.running}/${cardData.get(project.id)!.tasks!.desired} tasks`"
               color="neutral"
               variant="outline"
               class="font-mono text-[11px]"
@@ -193,14 +206,14 @@ const formatDate = (value: string) =>
           </div>
 
           <div class="flex items-center justify-between gap-2 border-t border-default pt-3 text-xs">
-            <span v-if="statusOf(project.id)?.lastDeployment" class="flex items-center gap-1.5">
+            <span v-if="cardData.get(project.id)?.status?.lastDeployment" class="flex items-center gap-1.5">
               <UBadge
-                :label="statusOf(project.id)!.lastDeployment!.status"
-                :color="deploymentStatusColor[statusOf(project.id)!.lastDeployment!.status]"
+                :label="cardData.get(project.id)!.status!.lastDeployment!.status"
+                :color="deploymentStatusColor[cardData.get(project.id)!.status!.lastDeployment!.status]"
                 variant="subtle"
                 size="sm"
               />
-              <span class="text-dimmed">#{{ statusOf(project.id)!.lastDeployment!.number }}</span>
+              <span class="text-dimmed">#{{ cardData.get(project.id)!.status!.lastDeployment!.number }}</span>
             </span>
             <span v-else class="text-dimmed">Never deployed</span>
 

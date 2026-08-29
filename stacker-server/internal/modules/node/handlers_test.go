@@ -299,7 +299,7 @@ func TestHTTPPingAndSwarm(t *testing.T) {
 func TestNewWiresModule(t *testing.T) {
 	db := testDB(t)
 	keys := sshkey.NewService(sshkey.NewRepository(db), t.TempDir(), silentLog())
-	m := New(db, keys, silentLog())
+	m := New(db, keys, "", false, silentLog())
 	if m.Service == nil || m.handler == nil {
 		t.Fatal("expected wired module")
 	}

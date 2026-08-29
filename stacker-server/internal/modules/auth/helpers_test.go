@@ -46,7 +46,7 @@ func testModule(t *testing.T, reset ResetDataFunc) (*Module, *gorm.DB) {
 	t.Helper()
 
 	db := testDB(t)
-	mod, err := New(db, reset, silentLog())
+	mod, err := New(db, nil, reset, silentLog())
 	if err != nil {
 		t.Fatalf("new auth module: %v", err)
 	}

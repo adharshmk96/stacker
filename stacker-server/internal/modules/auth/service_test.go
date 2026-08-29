@@ -535,7 +535,7 @@ func TestNewServiceReusesSecret(t *testing.T) {
 	mod, db := testModule(t, nil)
 	first := string(mod.Service.secret)
 
-	again, err := NewService(NewRepository(db), nil, silentLog())
+	again, err := NewService(NewRepository(db), nil, nil, silentLog())
 	if err != nil {
 		t.Fatalf("second new: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestNewServiceReusesSecret(t *testing.T) {
 	}
 
 	closeDB(t, db)
-	if _, err := New(db, nil, silentLog()); err == nil {
+	if _, err := New(db, nil, nil, silentLog()); err == nil {
 		t.Fatal("expected New to fail on a closed database")
 	}
 }

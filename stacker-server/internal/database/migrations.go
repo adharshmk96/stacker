@@ -7,6 +7,7 @@ import (
 	githubprovider "stacker/internal/modules/github"
 	"stacker/internal/modules/node"
 	"stacker/internal/modules/project"
+	"stacker/internal/modules/smtp"
 	"stacker/internal/modules/sshkey"
 
 	"gorm.io/gorm"
@@ -27,6 +28,7 @@ func models() []any {
 		&project.Project{},
 		&project.Environment{},
 		&project.Deployment{},
+		&smtp.Settings{},
 	}
 }
 

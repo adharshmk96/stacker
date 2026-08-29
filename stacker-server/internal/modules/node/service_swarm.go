@@ -343,7 +343,7 @@ func (s *Service) RefreshAll(ctx context.Context) ([]Node, error) {
 
 	for i := range items {
 		if unlocks[i] != nil {
-			defer unlocks[i]()
+			unlocks[i]()
 		}
 		if readings[i] == nil {
 			continue

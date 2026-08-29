@@ -51,24 +51,32 @@ func (r *Repository) ExistsByName(name, excludeID string) (bool, error) {
 	return count > 0, err
 }
 
+// HostOwnerMap returns a host→environment-id map for every routed hostname.
+func (r *Repository) HostOwnerMap() (map[string]string, error) {
+	var items []Environment
+	if err := r.db.Find(&items).Error; err != nil {
+		return nil, err
+	}
+	owners := make(map[string]string, len(items))
+	for _, env := range items {
+		for _, domain := range env.Domains {
+			if domain.Host != "" {
+				owners[domain.Host] = env.ID
+			}
+		}
+	}
+	return owners, nil
+}
+
 // HostOwner returns the id of the environment already routing a hostname, or an
 // empty string when the host is free. Routes live in one Traefik directory, so
 // two environments claiming the same host would silently fight over it.
 func (r *Repository) HostOwner(host string) (string, error) {
-	var items []Environment
-	// Domains are a JSON column, so the match cannot be pushed into SQL. The
-	// list is small — one row per environment across the whole installation.
-	if err := r.db.Find(&items).Error; err != nil {
+	owners, err := r.HostOwnerMap()
+	if err != nil {
 		return "", err
 	}
-	for _, env := range items {
-		for _, domain := range env.Domains {
-			if domain.Host == host {
-				return env.ID, nil
-			}
-		}
-	}
-	return "", nil
+	return owners[host], nil
 }
 
 // Create writes a project and its environments in one transaction, so a failure
@@ -147,6 +155,34 @@ func (r *Repository) GetDeployment(id string) (Deployment, error) {
 		return Deployment{}, ErrDeployNotFound
 	}
 	return item, err
+}
+
+// LatestForProjects returns the newest run per environment for many projects
+// in one query, keyed first by project id then environment id.
+func (r *Repository) LatestForProjects(projectIDs []string) (map[string]map[string]Deployment, error) {
+	out := make(map[string]map[string]Deployment, len(projectIDs))
+	if len(projectIDs) == 0 {
+		return out, nil
+	}
+
+	var items []Deployment
+	err := r.db.
+		Where("project_id IN ?", projectIDs).
+		Order("started_at desc").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range items {
+		if out[item.ProjectID] == nil {
+			out[item.ProjectID] = make(map[string]Deployment)
+		}
+		if _, seen := out[item.ProjectID][item.EnvironmentID]; !seen {
+			out[item.ProjectID][item.EnvironmentID] = item
+		}
+	}
+	return out, nil
 }
 
 // LatestByEnvironment returns the newest run of each environment of a project,

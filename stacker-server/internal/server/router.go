@@ -13,6 +13,7 @@ import (
 	"stacker/internal/modules/node"
 	"stacker/internal/modules/project"
 	"stacker/internal/modules/serversettings"
+	"stacker/internal/modules/smtp"
 	"stacker/internal/modules/sshkey"
 	"stacker/internal/modules/swarm"
 	"stacker/internal/web"
@@ -28,7 +29,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	}
 
 	r := gin.New()
-	r.Use(gin.Recovery(), requestLogger(log), cors())
+	r.Use(gin.Recovery(), requestLogger(log), cors(cfg))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -40,12 +41,14 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	if _, err := keyModule.Service.EnsureDefault(); err != nil {
 		return nil, err
 	}
-	nodeModule := node.New(db, keyModule.Service, log)
+	nodeModule := node.New(db, keyModule.Service, cfg.Host, cfg.IsProduction(), log)
 
 	// Auth guards every other module, so it is built first — and it is handed
 	// the data wipe rather than importing it, since erasing nodes is the node
 	// module's business, not auth's. The closure runs long after startup.
-	authModule, err := auth.New(db, func() error {
+	smtpModule := smtp.New(db, log)
+
+	authModule, err := auth.New(db, smtpModule.Service, func() error {
 		if err := database.Reset(db, log); err != nil {
 			return err
 		}
@@ -117,6 +120,7 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	swarmModule.RegisterRoutes(protected)
 	githubModule.RegisterRoutes(protected)
 	serverModule.RegisterRoutes(protected)
+	smtpModule.RegisterRoutes(protected)
 	projectModule.RegisterRoutes(protected)
 
 	// The embedded UI is the fallback, so it must be mounted after the API.
@@ -149,10 +153,10 @@ func requestLogger(log *slog.Logger) gin.HandlerFunc {
 }
 
 // cors allows the Nuxt dev server to call the API from another origin.
-func cors() gin.HandlerFunc {
+func cors(cfg config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
-		if origin != "" {
+		if origin != "" && originAllowed(origin, c.Request.Host, cfg.Host, cfg.IsProduction()) {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")

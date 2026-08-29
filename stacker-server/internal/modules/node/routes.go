@@ -17,9 +17,10 @@ type Module struct {
 
 // New wires the module. It takes the ssh key service directly — Node depends on
 // ssh keys, never the other way round.
-func New(db *gorm.DB, keySvc *sshkey.Service, log *slog.Logger) *Module {
+func New(db *gorm.DB, keySvc *sshkey.Service, allowedHost string, production bool, log *slog.Logger) *Module {
 	repo := NewRepository(db)
 	service := NewService(repo, keySvc, log.With("module", "node"))
+	setTerminalOrigin(allowedHost, production)
 
 	return &Module{
 		Service: service,

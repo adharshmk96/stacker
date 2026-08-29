@@ -1109,23 +1109,33 @@ func TestStatusStatesFromDocker(t *testing.T) {
 		"nothing deployed":  {nil, nil, RuntimeStopped},
 		"docker unreadable": {nil, errors.New("docker daemon is not running"), RuntimeUnknown},
 		"all tasks up": {
-			[]string{`{"Name":"x_web","Replicas":"2/2"}`}, nil, RuntimeRunning,
+			[]string{`{"Name":"STACK_web","Replicas":"2/2"}`}, nil, RuntimeRunning,
 		},
 		// A global service reports a suffix docker adds; it must still parse.
 		"global service": {
-			[]string{`{"Name":"x_web","Replicas":"1/1 (max 1 per node)"}`}, nil, RuntimeRunning,
+			[]string{`{"Name":"STACK_web","Replicas":"1/1 (max 1 per node)"}`}, nil, RuntimeRunning,
 		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			service, rec := testService(t, Options{})
-			rec.reply = func(Command) ([]string, error) { return tc.lines, tc.err }
-
 			item, err := service.Create(writeRequest())
 			if err != nil {
 				t.Fatalf("create: %v", err)
 			}
+			stack := StackName(item, item.Environments[0])
+			rec.reply = func(Command) ([]string, error) {
+				if tc.err != nil {
+					return nil, tc.err
+				}
+				lines := make([]string, len(tc.lines))
+				for i, line := range tc.lines {
+					lines[i] = strings.ReplaceAll(line, "STACK", stack)
+				}
+				return lines, nil
+			}
+
 			status, err := service.Status(context.Background(), item.ID)
 			if err != nil {
 				t.Fatalf("status: %v", err)
@@ -1239,9 +1249,6 @@ func TestListRedactsSecrets(t *testing.T) {
 
 func TestStatusAllReportsEveryProject(t *testing.T) {
 	service, rec := testService(t, Options{})
-	rec.reply = func(Command) ([]string, error) {
-		return []string{`{"Name":"x_web","Replicas":"1/1"}`, `{not json`, `{"Name":"x_api","Replicas":"n/a"}`}, nil
-	}
 
 	first, err := service.Create(writeRequest())
 	if err != nil {
@@ -1253,6 +1260,16 @@ func TestStatusAllReportsEveryProject(t *testing.T) {
 	second, err := service.Create(secondReq)
 	if err != nil {
 		t.Fatalf("create second: %v", err)
+	}
+
+	stack1 := StackName(first, first.Environments[0])
+	stack2 := StackName(second, second.Environments[0])
+	rec.reply = func(Command) ([]string, error) {
+		return []string{
+			`{"Name":"` + stack1 + `_web","Replicas":"1/1"}`,
+			`{not json`,
+			`{"Name":"` + stack2 + `_api","Replicas":"n/a"}`,
+		}, nil
 	}
 
 	statuses, err := service.StatusAll(context.Background())

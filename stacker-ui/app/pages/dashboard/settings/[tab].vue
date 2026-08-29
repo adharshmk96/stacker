@@ -20,7 +20,7 @@ const tabs = [
   { key: 'server', label: 'Server', icon: 'i-lucide-server', group: 0 },
   { key: 'git-provider', label: 'Git Provider', icon: 'i-lucide-git-branch', group: 1 },
   { key: 'registries', label: 'Registries', icon: 'i-lucide-container', group: 1, comingSoon: true },
-  { key: 'smtp', label: 'SMTP', icon: 'i-lucide-mail', group: 2, comingSoon: true },
+  { key: 'smtp', label: 'SMTP', icon: 'i-lucide-mail', group: 2 },
   { key: 'backup', label: 'Backup', icon: 'i-lucide-database-backup', group: 3, comingSoon: true },
 ] as const
 
@@ -93,6 +93,7 @@ useHead(() => ({ title: `${current.value?.label ?? 'Settings'} · Stacker` }))
           <SettingsSshKeysSection v-else-if="tab === 'ssh-keys'" />
           <SettingsServerSection v-else-if="tab === 'server'" />
           <SettingsGitProviderSection v-else-if="tab === 'git-provider'" />
+          <SettingsSmtpSection v-else-if="tab === 'smtp'" />
           <UPageCard
             v-else
             icon="i-lucide-construction"

@@ -150,6 +150,13 @@ function removeEnvironment(id: string) {
 
 const isGit = computed(() => draft.value?.sourceKind === 'git')
 
+const gitSource = computed(() => draft.value?.git ?? blankProject().git)
+const { compose: gitCompose, pending: gitPreviewPending, error: gitPreviewError, services: composeServices } =
+  useGitComposePreview(gitSource, isGit)
+
+const previewCompose = computed(() =>
+  isGit.value ? gitCompose.value : (draft.value?.compose ?? ''))
+
 /* ---- save and deploy ---- */
 
 const saving = ref(false)
@@ -400,6 +407,15 @@ const formatTime = (value: string) =>
           </header>
 
           <ProjectSourceSection :draft="draft" />
+
+          <div v-if="previewCompose || gitPreviewPending" class="mt-5 border-t border-default pt-5">
+            <ProjectComposePreview
+              :draft="draft"
+              :compose="previewCompose"
+              :loading="gitPreviewPending"
+              :error="gitPreviewError"
+            />
+          </div>
         </section>
 
         <!-- Environments -->
@@ -452,7 +468,12 @@ const formatTime = (value: string) =>
             class="mb-5"
           />
 
-          <ProjectDomainsSection v-if="selectedEnv" :key="selectedEnv.id" :environment="selectedEnv" />
+          <ProjectDomainsSection
+            v-if="selectedEnv"
+            :key="selectedEnv.id"
+            :environment="selectedEnv"
+            :service-items="composeServices"
+          />
         </section>
 
         <!-- Deploy -->

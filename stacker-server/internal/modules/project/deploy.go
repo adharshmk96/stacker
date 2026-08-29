@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+const maxDeploymentLogBytes = 512 * 1024
+
+const deploymentLogTruncated = "\n… (log truncated)"
+
 // The deploy engine.
 //
 // A deploy runs entirely on the machine stacker is installed on: it clones the
@@ -659,7 +663,7 @@ func (e *engine) finish(state *run, deployment *Deployment, err error) {
 
 	state.mu.Lock()
 	state.status = deployment.Status
-	deployment.Log = strings.Join(state.lines, "\n")
+	deployment.Log = capDeploymentLog(strings.Join(state.lines, "\n"))
 	state.mu.Unlock()
 
 	if saveErr := e.repo.SaveDeployment(deployment); saveErr != nil {
@@ -772,4 +776,15 @@ func truncate(value string, limit int) string {
 		return value
 	}
 	return value[:limit-1] + "…"
+}
+
+func capDeploymentLog(value string) string {
+	if len(value) <= maxDeploymentLogBytes {
+		return value
+	}
+	keep := maxDeploymentLogBytes - len(deploymentLogTruncated)
+	if keep < 0 {
+		keep = 0
+	}
+	return value[:keep] + deploymentLogTruncated
 }

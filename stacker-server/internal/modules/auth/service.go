@@ -27,22 +27,29 @@ var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // other modules it is about to erase.
 type ResetDataFunc func() error
 
+// MailSender delivers outbound email when SMTP is configured.
+type MailSender interface {
+	Enabled() bool
+	Send(to, subject, body string) error
+}
+
 // Service owns accounts, sessions and password resets.
 type Service struct {
 	repo      *Repository
 	secret    []byte
 	resetData ResetDataFunc
+	mail      MailSender
 	log       *slog.Logger
 }
 
 // NewService loads (or creates on first run) the signing secret.
-func NewService(repo *Repository, resetData ResetDataFunc, log *slog.Logger) (*Service, error) {
+func NewService(repo *Repository, resetData ResetDataFunc, mail MailSender, log *slog.Logger) (*Service, error) {
 	secret, err := repo.SecretOrCreate(jwtSecretKey, func() string { return randomHex(32) })
 	if err != nil {
 		return nil, err
 	}
 
-	return &Service{repo: repo, secret: []byte(secret), resetData: resetData, log: log}, nil
+	return &Service{repo: repo, secret: []byte(secret), resetData: resetData, mail: mail, log: log}, nil
 }
 
 // Status reports whether the install has an account yet.
@@ -238,6 +245,18 @@ func (s *Service) ForgotPassword(req ForgotPasswordRequest, baseURL string) erro
 	}
 
 	link := strings.TrimSuffix(baseURL, "/") + "/reset-password?token=" + token
+	subject := "Reset your Stacker password"
+	body := "Open this link to set a new password (expires in " + resetTTL.String() + "):\n\n" + link
+
+	if s.mail != nil && s.mail.Enabled() {
+		if err := s.mail.Send(user.Email, subject, body); err != nil {
+			s.log.Error("could not send password reset email", "email", user.Email, "error", err)
+			return err
+		}
+		s.log.Info("password reset email sent", "email", user.Email)
+		return nil
+	}
+
 	s.log.Info("password reset link issued — open it to set a new password",
 		"email", user.Email,
 		"expiresIn", resetTTL.String(),

@@ -32,23 +32,15 @@ const syncing = ref(false)
 onMounted(async () => {
   await load()
 
-  // Reachability is never stored, so the rows arrive `unknown` until a sweep
-  // has run; from then on the timer keeps the column honest.
   pingAll()
 
-  // Swarm state is stored, which is exactly why it needs re-reading: the row
-  // says what stacker last saw, and the host may have changed since. Doing it
-  // on every load means a node that lost docker says so before anyone tries to
-  // deploy to it. It is not on the timer — each node costs an ssh round trip
-  // and a `docker info`, which is too much to repeat every 30 seconds.
   syncing.value = true
   refreshSwarmAll().finally(() => {
     syncing.value = false
   })
-
-  const timer = setInterval(pingAll, pingInterval)
-  onBeforeUnmount(() => clearInterval(timer))
 })
+
+useLivePoll(pingAll, pingInterval)
 
 /** Re-runs both sweeps, for the toolbar's refresh. */
 async function onRefresh() {

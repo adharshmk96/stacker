@@ -2,7 +2,10 @@
 import type { Environment } from '~/types/project'
 
 /** Hostnames the proxy routes to this environment. Edits in place. */
-const props = defineProps<{ environment: Environment }>()
+const props = defineProps<{
+  environment: Environment
+  serviceItems?: { label: string, value: string }[]
+}>()
 
 const tlsItems = [
   { label: 'Let\'s Encrypt', value: 'auto' },
@@ -62,7 +65,15 @@ function removeDomain(id: string) {
         </UFormField>
 
         <UFormField label="Service">
-          <UInput v-model="domain.service" placeholder="web" class="w-full font-mono" />
+          <USelectMenu
+            v-if="serviceItems?.length"
+            v-model="domain.service"
+            :items="serviceItems"
+            value-key="value"
+            placeholder="web"
+            class="w-full font-mono"
+          />
+          <UInput v-else v-model="domain.service" placeholder="web" class="w-full font-mono" />
         </UFormField>
 
         <UFormField label="Port">

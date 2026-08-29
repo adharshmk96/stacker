@@ -30,8 +30,8 @@ type statusReader struct {
 	exec Exec
 }
 
-// Environment reads one environment's live state.
-func (s *statusReader) Environment(ctx context.Context, env Environment, stack string, deploying bool) EnvironmentStatus {
+// environmentFromRows builds live status from pre-fetched docker rows.
+func (s *statusReader) environmentFromRows(env Environment, stack string, rows []dockerServiceRow, deploying bool) EnvironmentStatus {
 	status := EnvironmentStatus{
 		EnvironmentID: env.ID,
 		Name:          env.Name,
@@ -40,18 +40,9 @@ func (s *statusReader) Environment(ctx context.Context, env Environment, stack s
 		Domains:       hosts(env.Domains),
 	}
 
-	rows, err := s.services(ctx, stack)
-	if err != nil {
-		status.State = RuntimeUnknown
-		status.Message = err.Error()
-		return status
-	}
-
 	for _, row := range rows {
 		running, desired := parseReplicas(row.Replicas)
 		status.Services = append(status.Services, ServiceState{
-			// Docker reports the stack-prefixed name; the compose service name
-			// is what the user wrote and what the domains refer to.
 			Name:    strings.TrimPrefix(row.Name, stack+"_"),
 			Stack:   stack,
 			Image:   shortImage(row.Image),
@@ -65,9 +56,6 @@ func (s *statusReader) Environment(ctx context.Context, env Environment, stack s
 
 	switch {
 	case deploying:
-		// A run in flight outranks the reading: mid-rollout a stack is expected
-		// to be short of tasks, and calling that degraded would flash an alarm
-		// on every deploy.
 		status.State = RuntimeDeploying
 	case len(status.Services) == 0:
 		status.State = RuntimeStopped
@@ -80,21 +68,40 @@ func (s *statusReader) Environment(ctx context.Context, env Environment, stack s
 	return status
 }
 
+// Environment reads one environment's live state.
+func (s *statusReader) Environment(ctx context.Context, env Environment, stack string, deploying bool) EnvironmentStatus {
+	rows, err := s.services(ctx, stack)
+	if err != nil {
+		return EnvironmentStatus{
+			EnvironmentID: env.ID,
+			Name:          env.Name,
+			Stack:         stack,
+			Services:      []ServiceState{},
+			Domains:       hosts(env.Domains),
+			State:         RuntimeUnknown,
+			Message:       err.Error(),
+		}
+	}
+	return s.environmentFromRows(env, stack, rows, deploying)
+}
+
 // services lists the swarm services belonging to a stack.
-//
-// The stack-namespace label is the filter rather than a name prefix: the label is
-// what docker itself uses to group a stack, and a name filter would also match an
-// unrelated service that happens to start with the same characters.
 func (s *statusReader) services(ctx context.Context, stack string) ([]dockerServiceRow, error) {
+	grouped, err := s.allServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return grouped[stack], nil
+}
+
+// allServices reads every swarm service in one docker call and groups rows by
+// stack namespace (the part before the first underscore in the service name).
+func (s *statusReader) allServices(ctx context.Context) (map[string][]dockerServiceRow, error) {
 	var output strings.Builder
 	cmd := Command{
 		Name: "docker",
-		Args: []string{
-			"service", "ls",
-			"--filter", "label=com.docker.stack.namespace=" + stack,
-			"--format", "{{json .}}",
-		},
-		Env: os.Environ(),
+		Args: []string{"service", "ls", "--format", "{{json .}}"},
+		Env:  os.Environ(),
 	}
 
 	err := s.exec(ctx, cmd, func(line string) {
@@ -105,11 +112,9 @@ func (s *statusReader) services(ctx context.Context, stack string) ([]dockerServ
 		return nil, err
 	}
 
-	rows := []dockerServiceRow{}
+	grouped := map[string][]dockerServiceRow{}
 	for line := range strings.SplitSeq(output.String(), "\n") {
 		line = strings.TrimSpace(line)
-		// Docker writes warnings on the same stream, so anything that is not an
-		// object is skipped rather than failing the read.
 		if !strings.HasPrefix(line, "{") {
 			continue
 		}
@@ -117,9 +122,13 @@ func (s *statusReader) services(ctx context.Context, stack string) ([]dockerServ
 		if json.Unmarshal([]byte(line), &row) != nil {
 			continue
 		}
-		rows = append(rows, row)
+		stack, _, ok := strings.Cut(row.Name, "_")
+		if !ok {
+			continue
+		}
+		grouped[stack] = append(grouped[stack], row)
 	}
-	return rows, nil
+	return grouped, nil
 }
 
 // parseReplicas reads docker's `running/desired` column. A global service shows

@@ -1,0 +1,26 @@
+package smtp
+
+import (
+	"log/slog"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+type Module struct {
+	Service *Service
+	handler *Handler
+}
+
+func New(db *gorm.DB, log *slog.Logger) *Module {
+	repo := NewRepository(db)
+	service := NewService(repo, log.With("module", "smtp"))
+	return &Module{Service: service, handler: &Handler{service: service}}
+}
+
+func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
+	group := r.Group("/settings/smtp")
+	group.GET("", m.handler.get)
+	group.PUT("", m.handler.update)
+	group.POST("/test", m.handler.test)
+}
