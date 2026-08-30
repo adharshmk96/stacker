@@ -331,3 +331,13 @@ type LogChunk struct {
 	// Done is true once no more lines will arrive.
 	Done bool `json:"done"`
 }
+
+// ServiceLogChunk is the current tail of one swarm service's container output.
+// Unlike a deployment's log, docker's own log command has no cursor to resume
+// from, so every poll re-reads the tail rather than continuing where the last
+// one left off.
+type ServiceLogChunk struct {
+	Service   string    `json:"service"`
+	Lines     []string  `json:"lines"`
+	FetchedAt time.Time `json:"fetchedAt"`
+}

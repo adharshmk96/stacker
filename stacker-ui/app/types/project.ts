@@ -162,3 +162,16 @@ export interface ProjectStatus {
   lastDeployment?: Deployment
   checkedAt: string
 }
+
+/**
+ * The current tail of one service's container output.
+ *
+ * Unlike a deployment's log this has no cursor: docker's own log command
+ * always answers with the tail it has right now, so each poll replaces what
+ * is shown rather than appending to it.
+ */
+export interface ServiceLogChunk {
+  service: string
+  lines: string[]
+  fetchedAt: string
+}
