@@ -17,14 +17,14 @@ const settingsID = "default"
 
 // SettingsResponse is what the browser reads. Password is never returned.
 type SettingsResponse struct {
-	Enabled    bool   `json:"enabled"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Encryption string `json:"encryption"`
-	Username   string `json:"username"`
-	HasPassword bool  `json:"hasPassword"`
-	FromName   string `json:"fromName"`
-	FromEmail  string `json:"fromEmail"`
+	Enabled     bool   `json:"enabled"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Encryption  string `json:"encryption"`
+	Username    string `json:"username"`
+	HasPassword bool   `json:"hasPassword"`
+	FromName    string `json:"fromName"`
+	FromEmail   string `json:"fromEmail"`
 }
 
 type UpdateRequest struct {
