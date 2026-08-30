@@ -6,6 +6,7 @@ var (
 	ErrNotFound        = errors.New("project not found")
 	ErrEnvNotFound     = errors.New("environment not found")
 	ErrDeployNotFound  = errors.New("deployment not found")
+	ErrServiceNotFound = errors.New("service not found")
 	ErrNameTaken       = errors.New("a project with that name already exists")
 	ErrInvalidName     = errors.New("use letters, numbers, dashes and underscores")
 	ErrInvalidSource   = errors.New("source must be git or compose")

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -605,6 +606,52 @@ func (s *Service) Cancel(id string) error { return s.engine.Cancel(id) }
 
 // Logs reads a run's output after a cursor.
 func (s *Service) Logs(id string, after int) (LogChunk, error) { return s.engine.Logs(id, after) }
+
+// ServiceLogs reads the current tail of one compose service's container
+// output, via `docker service logs` on the swarm service the stack runs it as.
+func (s *Service) ServiceLogs(ctx context.Context, id, envID, service string, tail int) (ServiceLogChunk, error) {
+	item, err := s.repo.Get(id)
+	if err != nil {
+		return ServiceLogChunk{}, err
+	}
+	env, err := findEnv(item, envID)
+	if err != nil {
+		return ServiceLogChunk{}, err
+	}
+	if !serviceName.MatchString(service) {
+		return ServiceLogChunk{}, ErrServiceNotFound
+	}
+	if tail <= 0 || tail > 2000 {
+		tail = 300
+	}
+
+	stack := StackName(item, env)
+	swarmService := stack + "_" + service
+
+	var lines []string
+	cmd := Command{
+		Name: "docker",
+		Args: []string{"service", "logs", "--tail", strconv.Itoa(tail), "--timestamps", "--no-task-ids", swarmService},
+		Env:  os.Environ(),
+	}
+	if err := execCommand(ctx, cmd, func(line string) { lines = append(lines, line) }); err != nil {
+		if rows, statusErr := s.status.services(ctx, stack); statusErr == nil {
+			found := false
+			for _, row := range rows {
+				if strings.TrimPrefix(row.Name, stack+"_") == service {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return ServiceLogChunk{}, ErrServiceNotFound
+			}
+		}
+		return ServiceLogChunk{}, err
+	}
+
+	return ServiceLogChunk{Service: service, Lines: lines, FetchedAt: timeNow()}, nil
+}
 
 // Deployments lists runs newest first, optionally filtered to one project.
 func (s *Service) Deployments(projectID string, limit int) ([]Deployment, error) {

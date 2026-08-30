@@ -46,6 +46,7 @@ func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
 	// A POST: it starts work on the host, and answers 202 rather than the result.
 	env.POST("/deploy", m.handler.deploy)
 	env.POST("/stop", m.handler.stop)
+	env.GET("/services/:service/logs", m.handler.serviceLogs)
 
 	deployments := r.Group("/deployments")
 	deployments.GET("", m.handler.deployments)

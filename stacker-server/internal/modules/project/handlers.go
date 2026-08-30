@@ -179,6 +179,20 @@ func (h *Handler) logs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
+// serviceLogs answers the current tail of one compose service's container
+// output. It is a GET, safe to poll, and re-reads the tail on every call since
+// docker's own log command has no cursor to resume from.
+func (h *Handler) serviceLogs(c *gin.Context) {
+	tail, _ := strconv.Atoi(c.DefaultQuery("tail", "300"))
+
+	result, err := h.service.ServiceLogs(c.Request.Context(), c.Param("id"), c.Param("envId"), c.Param("service"), tail)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
 func (h *Handler) cancel(c *gin.Context) {
 	if err := h.service.Cancel(c.Param("id")); err != nil {
 		respondError(c, err)
@@ -191,7 +205,7 @@ func (h *Handler) cancel(c *gin.Context) {
 // is a bug rather than a bad request, so it is logged and answered generically.
 func respondError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, ErrNotFound), errors.Is(err, ErrEnvNotFound), errors.Is(err, ErrDeployNotFound):
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrEnvNotFound), errors.Is(err, ErrDeployNotFound), errors.Is(err, ErrServiceNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrNameTaken), errors.Is(err, ErrDomainTaken), errors.Is(err, ErrAlreadyDeploying):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})

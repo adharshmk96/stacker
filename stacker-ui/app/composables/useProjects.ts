@@ -5,7 +5,8 @@ import type {
   Project,
   ProjectPayload,
   ProjectStatus,
-  RuntimeState
+  RuntimeState,
+  ServiceLogChunk
 } from '~/types/project'
 
 /**
@@ -186,6 +187,12 @@ export function useProjects() {
   const stop = (projectId: string, environmentId: string) =>
     api.post(`/projects/${projectId}/environments/${environmentId}/stop`, {})
 
+  /** Reads the current tail of one compose service's container output. */
+  const serviceLogs = (projectId: string, environmentId: string, service: string, tail = 300) =>
+    api.get<ServiceLogChunk>(
+      `/projects/${projectId}/environments/${environmentId}/services/${encodeURIComponent(service)}/logs?tail=${tail}`
+    )
+
   return {
     items,
     pending,
@@ -200,6 +207,7 @@ export function useProjects() {
     refreshStatus,
     refreshProjectStatus,
     deploy,
-    stop
+    stop,
+    serviceLogs
   }
 }

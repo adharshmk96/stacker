@@ -76,6 +76,7 @@ const tabs = [
   { key: 'environments', label: 'Environments', icon: 'i-lucide-layers' },
   { key: 'domains', label: 'Domains', icon: 'i-lucide-globe' },
   { key: 'deploy', label: 'Deploy', icon: 'i-lucide-rocket' },
+  { key: 'logs', label: 'Logs', icon: 'i-lucide-scroll-text' },
   { key: 'activity', label: 'Activity', icon: 'i-lucide-history' },
   { key: 'settings', label: 'Settings', icon: 'i-lucide-settings' }
 ] as const
@@ -147,6 +148,21 @@ function removeEnvironment(id: string) {
   draft.value.environments = draft.value.environments.filter(env => env.id !== id)
   if (selectedEnvId.value === id) selectedEnvId.value = draft.value.environments[0]!.id
 }
+
+/* ---- logs: which service of the selected environment is shown ---- */
+
+const selectedServiceName = ref('')
+
+const envServices = computed(() =>
+  status.value?.environments.find(env => env.environmentId === selectedEnvId.value)?.services ?? [])
+
+// The selection follows the environment switch and drops out when a service
+// stops existing — a stale name would just poll into a 404 forever.
+watch([envServices, selectedEnvId], ([services]) => {
+  if (!services.some(service => service.name === selectedServiceName.value)) {
+    selectedServiceName.value = services[0]?.name ?? ''
+  }
+})
 
 const isGit = computed(() => draft.value?.sourceKind === 'git')
 
@@ -501,6 +517,61 @@ const formatTime = (value: string) =>
             :environment="selectedEnv"
             :is-git="isGit"
           />
+        </section>
+
+        <!-- Logs -->
+        <section
+          v-else-if="tab === 'logs'"
+          class="rounded-lg border border-default bg-default/60 p-5 backdrop-blur"
+        >
+          <header class="mb-4">
+            <h2 class="text-sm font-semibold text-highlighted">Logs</h2>
+            <p class="text-sm text-muted">
+              Container output for one service of the selected environment, read straight from
+              docker.
+            </p>
+          </header>
+
+          <ProjectEnvSwitcher
+            v-model="selectedEnvId"
+            :environments="draft.environments"
+            class="mb-4"
+          />
+
+          <p v-if="!envServices.length" class="text-sm text-dimmed">
+            No services are running for this environment.
+          </p>
+
+          <template v-else>
+            <div class="mb-4 flex flex-wrap gap-1.5">
+              <button
+                v-for="service in envServices"
+                :key="service.name"
+                type="button"
+                class="flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 font-mono text-[13px] transition-colors"
+                :class="service.name === selectedServiceName
+                  ? 'border-accented bg-elevated text-highlighted'
+                  : 'border-default text-muted hover:bg-elevated/40'"
+                @click="selectedServiceName = service.name"
+              >
+                <UIcon
+                  name="i-lucide-box"
+                  class="size-3.5"
+                  :class="service.name === selectedServiceName ? 'text-primary' : 'text-dimmed'"
+                />
+                {{ service.name }}
+                <span class="text-xs text-dimmed">{{ service.running }}/{{ service.desired }}</span>
+              </button>
+            </div>
+
+            <ProjectServiceLogViewer
+              v-if="selectedServiceName"
+              :key="`${selectedEnvId}:${selectedServiceName}`"
+              :project-id="projectId"
+              :environment-id="selectedEnvId"
+              :service="selectedServiceName"
+            />
+          </template>
         </section>
 
         <!-- Activity -->
