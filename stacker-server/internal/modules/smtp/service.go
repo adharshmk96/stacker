@@ -17,11 +17,16 @@ var (
 
 type Service struct {
 	repo *Repository
+	key  []byte
 	log  *slog.Logger
 }
 
-func NewService(repo *Repository, log *slog.Logger) *Service {
-	return &Service{repo: repo, log: log}
+func NewService(repo *Repository, keyDir string, log *slog.Logger) (*Service, error) {
+	key, err := loadOrCreateKey(keyDir)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{repo: repo, key: key, log: log}, nil
 }
 
 func (s *Service) Enabled() bool {
@@ -55,7 +60,11 @@ func (s *Service) Update(req UpdateRequest) (SettingsResponse, error) {
 	item.FromEmail = strings.ToLower(strings.TrimSpace(req.FromEmail))
 
 	if req.Password != "" {
-		item.Password = req.Password
+		encrypted, err := encrypt(s.key, req.Password)
+		if err != nil {
+			return SettingsResponse{}, err
+		}
+		item.Password = encrypted
 	}
 
 	if item.Port <= 0 {
@@ -86,6 +95,12 @@ func (s *Service) Send(to, subject, body string) error {
 	if item.Host == "" || item.FromEmail == "" {
 		return ErrInvalidConfig
 	}
+
+	password, err := decrypt(s.key, item.Password)
+	if err != nil {
+		return fmt.Errorf("smtp: decrypt password: %w", err)
+	}
+	item.Password = password
 
 	from := formatAddress(item.FromName, item.FromEmail)
 	msg := buildMessage(from, to, subject, body)

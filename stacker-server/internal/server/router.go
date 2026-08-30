@@ -46,7 +46,10 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	// Auth guards every other module, so it is built first — and it is handed
 	// the data wipe rather than importing it, since erasing nodes is the node
 	// module's business, not auth's. The closure runs long after startup.
-	smtpModule := smtp.New(db, log)
+	smtpModule, err := smtp.New(db, cfg.KeyDir, log)
+	if err != nil {
+		return nil, err
+	}
 
 	authModule, err := auth.New(db, smtpModule.Service, func() error {
 		if err := database.Reset(db, log); err != nil {

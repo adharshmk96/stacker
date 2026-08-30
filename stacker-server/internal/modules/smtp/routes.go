@@ -12,10 +12,13 @@ type Module struct {
 	handler *Handler
 }
 
-func New(db *gorm.DB, log *slog.Logger) *Module {
+func New(db *gorm.DB, keyDir string, log *slog.Logger) (*Module, error) {
 	repo := NewRepository(db)
-	service := NewService(repo, log.With("module", "smtp"))
-	return &Module{Service: service, handler: &Handler{service: service}}
+	service, err := NewService(repo, keyDir, log.With("module", "smtp"))
+	if err != nil {
+		return nil, err
+	}
+	return &Module{Service: service, handler: &Handler{service: service}}, nil
 }
 
 func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
