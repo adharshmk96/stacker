@@ -10,7 +10,7 @@ const toast = useToast()
 const { items, pending, error, load, refresh, hasLive, cancel } = useDeployments()
 const { items: projects, load: loadProjects, deploy } = useProjects()
 
-onMounted(() => Promise.all([load(), loadProjects()]))
+onMounted(() => Promise.all([load(true), loadProjects(true)]))
 
 /**
  * The table follows live runs. While nothing is moving there is nothing to poll

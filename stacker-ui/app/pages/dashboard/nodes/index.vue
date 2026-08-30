@@ -30,7 +30,7 @@ const syncing = ref(false)
 
 // Client-side only: the UI is generated as a static SPA.
 onMounted(async () => {
-  await load()
+  await load(true)
 
   pingAll()
 

@@ -52,7 +52,7 @@ const status = computed(() => statusOf(projectId.value))
 const loading = ref(true)
 
 onMounted(async () => {
-  await Promise.all([load(), loadDeployments()])
+  await Promise.all([load(true), loadDeployments(true)])
   draft.value = toPayload()
   selectedEnvId.value = draft.value?.environments[0]?.id ?? ''
   loading.value = false

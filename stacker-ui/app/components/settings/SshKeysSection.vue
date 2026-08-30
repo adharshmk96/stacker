@@ -9,8 +9,8 @@ const { items: nodeItems, load: loadNodes } = useNodes()
 // Client-side only: the stacker server is a local daemon, so there is nothing
 // for the SSR pass to talk to.
 onMounted(() => {
-  load()
-  loadNodes()
+  load(true)
+  loadNodes(true)
 })
 
 const search = ref('')

@@ -34,7 +34,7 @@ const node = computed(() => items.value.find(item => item.id === nodeId.value))
 const loading = ref(true)
 
 onMounted(async () => {
-  await load()
+  await load(true)
   loading.value = false
 
   // A fresh look at this one node's own state, not the whole fleet's — cheap

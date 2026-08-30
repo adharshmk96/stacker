@@ -13,7 +13,7 @@ const { items, pending, load } = useNodes()
 const tasks = useSwarmApi()
 
 onMounted(() => {
-  load()
+  load(true)
   // A failure here only costs the counts, so it is never surfaced: the alert
   // for an unreadable swarm belongs to the list below, not to this summary.
   tasks.load('tasks')

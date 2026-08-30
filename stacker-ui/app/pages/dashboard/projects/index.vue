@@ -9,7 +9,7 @@ const { items, pending, error, load, remove, statusOf, refreshStatus } = useProj
 
 const search = ref('')
 
-onMounted(load)
+onMounted(() => load(true))
 
 // The cards show what docker is running, which changes on its own — so it is
 // polled rather than read once on mount.

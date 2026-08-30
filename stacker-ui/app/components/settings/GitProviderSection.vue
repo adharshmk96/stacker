@@ -15,7 +15,7 @@ const origin = computed(() => window.location.origin)
 const webhookURL = computed(() => `${origin.value}/api/github/webhooks`)
 
 onMounted(async () => {
-  await github.load()
+  await github.load(true)
   if (route.query.github === 'created') toast.add({ title: 'GitHub App created', description: 'Install it to choose repository access.', color: 'success' })
   if (route.query.github === 'installed') toast.add({ title: 'GitHub connected', description: 'Repository access is ready.', color: 'success' })
   if (route.query.github === 'error') toast.add({ title: 'GitHub connection failed', description: 'Check the server logs and try again.', color: 'error' })

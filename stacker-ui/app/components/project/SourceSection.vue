@@ -49,12 +49,12 @@ const github = useGitHub()
 
 onMounted(() => {
   // Only GitHub can be enumerated, so nothing is fetched for other providers.
-  if (props.draft.git.provider === 'github') void github.load()
+  if (props.draft.git.provider === 'github') void github.load(true)
 })
 
 // Loaded lazily, so switching the provider to GitHub after mount still fills in.
 watch(() => props.draft.git.provider, (provider) => {
-  if (provider === 'github') void github.load()
+  if (provider === 'github') void github.load(true)
 })
 
 const repositoryItems = computed(() => {
