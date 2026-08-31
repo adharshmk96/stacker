@@ -37,6 +37,9 @@ type Options struct {
 	Network string
 	// Token supplies a git credential for private repositories. Optional.
 	Token tokenFunc
+	// KeyDir is the server's key directory, holding the AES key that encrypts
+	// project secrets at rest, alongside the SSH host keys and the SMTP key.
+	KeyDir string
 }
 
 func NewService(repo *Repository, opts Options, log *slog.Logger) *Service {

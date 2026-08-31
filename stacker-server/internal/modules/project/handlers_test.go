@@ -26,12 +26,16 @@ func testModuleHTTP(t *testing.T, username string) (*gin.Engine, *Module, *recor
 		WorkRoot:           filepath.Join(t.TempDir(), "work"),
 		TraefikDynamicPath: filepath.Join(t.TempDir(), "stacker.yml"),
 		Network:            "stacker_proxy",
+		KeyDir:             t.TempDir(),
 	}
 	if err := os.MkdirAll(opts.WorkRoot, 0o700); err != nil {
 		t.Fatalf("workroot: %v", err)
 	}
 
-	m := New(testDB(t), opts, silentLog())
+	m, err := New(testDB(t), opts, silentLog())
+	if err != nil {
+		t.Fatalf("new module: %v", err)
+	}
 	rec := &recorder{}
 	m.Service.engine.exec = rec.exec
 	m.Service.status.exec = rec.exec
@@ -468,8 +472,12 @@ func TestListHTTPReturns500WhenDatabaseIsClosed(t *testing.T) {
 		WorkRoot:           t.TempDir(),
 		TraefikDynamicPath: filepath.Join(t.TempDir(), "stacker.yml"),
 		Network:            "stacker_proxy",
+		KeyDir:             t.TempDir(),
 	}
-	m := New(db, opts, silentLog())
+	m, err := New(db, opts, silentLog())
+	if err != nil {
+		t.Fatalf("new module: %v", err)
+	}
 	engine := gin.New()
 	m.RegisterRoutes(engine.Group(""))
 

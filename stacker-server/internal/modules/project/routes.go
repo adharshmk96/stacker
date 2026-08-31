@@ -14,13 +14,17 @@ type Module struct {
 }
 
 // New wires the module.
-func New(db *gorm.DB, opts Options, log *slog.Logger) *Module {
-	service := NewService(NewRepository(db), opts, log.With("module", "project"))
+func New(db *gorm.DB, opts Options, log *slog.Logger) (*Module, error) {
+	repo, err := NewRepository(db, opts.KeyDir)
+	if err != nil {
+		return nil, err
+	}
+	service := NewService(repo, opts, log.With("module", "project"))
 
 	return &Module{
 		Service: service,
 		handler: NewHandler(service),
-	}
+	}, nil
 }
 
 // RegisterRoutes mounts the module under the given API group.
