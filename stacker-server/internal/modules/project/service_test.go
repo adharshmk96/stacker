@@ -114,8 +114,15 @@ func testService(t *testing.T, opts Options) (*Service, *recorder) {
 	if opts.Network == "" {
 		opts.Network = "stacker_proxy"
 	}
+	if opts.KeyDir == "" {
+		opts.KeyDir = t.TempDir()
+	}
 
-	service := NewService(NewRepository(testDB(t)), opts, silentLog())
+	repo, err := NewRepository(testDB(t), opts.KeyDir)
+	if err != nil {
+		t.Fatalf("new repository: %v", err)
+	}
+	service := NewService(repo, opts, silentLog())
 
 	rec := &recorder{}
 	service.engine.exec = rec.exec
@@ -1244,6 +1251,48 @@ func TestListRedactsSecrets(t *testing.T) {
 	}
 	if got := items[0].Environments[0].Secrets[0].Value; got != "" {
 		t.Errorf("listed secret = %q, want it blank", got)
+	}
+}
+
+// TestSecretsAreEncryptedAtRest checks the guarantee that matters: the value
+// sitting in the sqlite row is not the plaintext the user typed, and a second
+// repository opened against the same key directory (a stand-in for a server
+// restart) can still read it back correctly.
+func TestSecretsAreEncryptedAtRest(t *testing.T) {
+	keyDir := t.TempDir()
+	service, _ := testService(t, Options{KeyDir: keyDir})
+
+	req := writeRequest()
+	req.Environments[0].Secrets = []EnvVar{{Key: "SESSION_SECRET", Value: "s3cret"}}
+	item, err := service.Create(req)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	envID := item.Environments[0].ID
+
+	var raw string
+	if err := service.repo.db.Raw(
+		`SELECT secrets FROM project_environments WHERE id = ?`, envID,
+	).Scan(&raw).Error; err != nil {
+		t.Fatalf("read raw row: %v", err)
+	}
+	if strings.Contains(raw, "s3cret") {
+		t.Fatalf("secrets column holds the plaintext value: %s", raw)
+	}
+
+	// A second repository against the same key directory is what a server
+	// restart looks like: the key is loaded from disk, not regenerated, so the
+	// value it reads back is the one the user typed.
+	repo, err := NewRepository(service.repo.db, keyDir)
+	if err != nil {
+		t.Fatalf("reopen repository: %v", err)
+	}
+	stored, err := repo.Get(item.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := stored.Environments[0].Secrets[0].Value; got != "s3cret" {
+		t.Errorf("decrypted secret = %q, want %q", got, "s3cret")
 	}
 }
 

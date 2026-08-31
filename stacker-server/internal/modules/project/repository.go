@@ -2,6 +2,7 @@ package project
 
 import (
 	"errors"
+	"fmt"
 
 	"gorm.io/gorm"
 )
@@ -9,10 +10,52 @@ import (
 // Repository is the only place this module touches the database.
 type Repository struct {
 	db *gorm.DB
+	// key encrypts every environment's secrets on the way in and decrypts them
+	// on the way out, so what sits in the sqlite file is never the value the
+	// user typed. Variables are left alone: only Secrets is meant to be
+	// hidden.
+	key []byte
 }
 
-func NewRepository(db *gorm.DB) *Repository {
-	return &Repository{db: db}
+// NewRepository opens the repository and loads (or creates) the AES key that
+// protects project secrets at rest. keyDir is the server's key directory,
+// shared with the SSH host keys and the SMTP password key.
+func NewRepository(db *gorm.DB, keyDir string) (*Repository, error) {
+	key, err := loadOrCreateSecretsKey(keyDir)
+	if err != nil {
+		return nil, err
+	}
+	return &Repository{db: db, key: key}, nil
+}
+
+// encryptSecrets seals every secret value of the given environments in
+// place, so what reaches the database is ciphertext rather than the value
+// the user typed.
+func (r *Repository) encryptSecrets(envs []Environment) error {
+	for i := range envs {
+		for j, secret := range envs[i].Secrets {
+			sealed, err := encryptSecret(r.key, secret.Value)
+			if err != nil {
+				return fmt.Errorf("project: encrypt secret %q: %w", secret.Key, err)
+			}
+			envs[i].Secrets[j].Value = sealed
+		}
+	}
+	return nil
+}
+
+// decryptSecrets reverses encryptSecrets after a read, in place.
+func (r *Repository) decryptSecrets(envs []Environment) error {
+	for i := range envs {
+		for j, secret := range envs[i].Secrets {
+			opened, err := decryptSecret(r.key, secret.Value)
+			if err != nil {
+				return fmt.Errorf("project: decrypt secret %q: %w", secret.Key, err)
+			}
+			envs[i].Secrets[j].Value = opened
+		}
+	}
+	return nil
 }
 
 /* ---- projects ---- */
@@ -25,7 +68,15 @@ func (r *Repository) List() ([]Project, error) {
 		Preload("Environments", orderEnvironments).
 		Order("created_at desc").
 		Find(&items).Error
-	return items, err
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if err := r.decryptSecrets(items[i].Environments); err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
 func (r *Repository) Get(id string) (Project, error) {
@@ -36,7 +87,13 @@ func (r *Repository) Get(id string) (Project, error) {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return Project{}, ErrNotFound
 	}
-	return item, err
+	if err != nil {
+		return Project{}, err
+	}
+	if err := r.decryptSecrets(item.Environments); err != nil {
+		return Project{}, err
+	}
+	return item, nil
 }
 
 // ExistsByName checks for a name clash, ignoring the project being updated.
@@ -82,6 +139,9 @@ func (r *Repository) HostOwner(host string) (string, error) {
 // Create writes a project and its environments in one transaction, so a failure
 // halfway cannot leave a project with no way to deploy.
 func (r *Repository) Create(item *Project) error {
+	if err := r.encryptSecrets(item.Environments); err != nil {
+		return err
+	}
 	return r.db.Create(item).Error
 }
 
@@ -89,6 +149,9 @@ func (r *Repository) Create(item *Project) error {
 // new list are deleted, which is what makes the detail page's "remove
 // environment" stick.
 func (r *Repository) Save(item *Project, removedEnvIDs []string) error {
+	if err := r.encryptSecrets(item.Environments); err != nil {
+		return err
+	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if len(removedEnvIDs) > 0 {
 			if err := tx.Delete(&Environment{}, "id IN ?", removedEnvIDs).Error; err != nil {

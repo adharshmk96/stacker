@@ -74,12 +74,16 @@ func newRouter(cfg config.Config, db *gorm.DB, log *slog.Logger) (*gin.Engine, e
 	// own paths rather than a node: the workspace they clone and build in, the
 	// Traefik directory their hostnames are published through, and the overlay
 	// network Traefik shares with whatever they deploy.
-	projectModule := project.New(db, project.Options{
+	projectModule, err := project.New(db, project.Options{
 		WorkRoot:           cfg.WorkRoot,
 		TraefikDynamicPath: cfg.TraefikDynamicPath,
 		Network:            cfg.StackName + "_proxy",
 		Token:              githubModule.Service.CloneToken,
+		KeyDir:             cfg.KeyDir,
 	}, log)
+	if err != nil {
+		return nil, err
+	}
 	// One webhook carries both: the ref decided which of the two it was.
 	githubModule.SetPushHandler(func(_ context.Context, event githubprovider.PushEvent) error {
 		if event.Tag != "" {
