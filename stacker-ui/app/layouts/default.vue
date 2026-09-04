@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { NavigationMenu, NavigationMenuItem } from '@nuxt/ui'
+import type { ServerSettings } from '~/types/server'
 
 // Roomier rows than the default sidebar; the active marker itself is in main.css.
 const navUi: NavigationMenu['ui'] = {
@@ -9,6 +10,16 @@ const navUi: NavigationMenu['ui'] = {
 }
 
 const route = useRoute()
+const api = useApi()
+const version = ref('')
+
+onMounted(async () => {
+  try {
+    version.value = (await api.get<ServerSettings>('/server')).instance.version
+  } catch {
+    // Dashboard navigation must still work when live server information is unavailable.
+  }
+})
 
 // Infrastructure and application navigation.
 const links = computed<NavigationMenuItem[][]>(() => [
@@ -55,7 +66,7 @@ const links = computed<NavigationMenuItem[][]>(() => [
           </div>
           <div v-if="!collapsed" class="flex items-baseline gap-2">
             <span class="font-mono font-semibold tracking-tight text-highlighted">stacker</span>
-            <span class="font-mono text-[10px] text-dimmed">v0.1</span>
+            <span v-if="version" class="font-mono text-[10px] text-dimmed">{{ version }}</span>
           </div>
         </div>
       </template>

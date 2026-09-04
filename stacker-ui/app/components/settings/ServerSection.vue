@@ -1,28 +1,5 @@
 <script setup lang="ts">
-interface ServerSettings {
-  instance: { hostname: string, ip?: string, version: string, builtAt?: string, startedAt: string, docker?: string, os?: string }
-  traefik: {
-    domain: string
-    https: boolean
-    certificateResolver?: string
-    backendTarget?: string
-    httpRedirect: boolean
-    publishedPorts: string[]
-    stackName: string
-    stackerService: ServiceInfo
-    traefikService: ServiceInfo
-  }
-}
-
-interface ServiceInfo {
-  name: string
-  image?: string
-  version?: string
-  running: number
-  desired: number
-  status: 'healthy' | 'degraded' | 'unavailable'
-  updatedAt?: string
-}
+import type { ServerSettings, ServiceInfo } from '~/types/server'
 
 const api = useApi()
 const toast = useToast()
