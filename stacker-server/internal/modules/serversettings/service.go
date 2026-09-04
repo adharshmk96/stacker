@@ -200,7 +200,9 @@ func (s *Service) latestStable(ctx context.Context, repository string) (UpdateCa
 		candidate.Available = Version != release.TagName
 		return candidate, nil
 	}
-	return UpdateCandidate{}, fmt.Errorf("%w: no published stable release", ErrUpdatesUnavailable)
+	// A repository can legitimately have no stable release yet. Keep the stable
+	// channel disabled while still allowing Updates to return the edge candidate.
+	return UpdateCandidate{Channel: "stable"}, nil
 }
 
 func (s *Service) latestEdge(ctx context.Context, repository string) (UpdateCandidate, error) {

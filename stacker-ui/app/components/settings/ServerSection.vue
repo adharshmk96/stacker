@@ -185,10 +185,10 @@ onUnmounted(() => clearInterval(clock))
           <div>
             <p class="font-medium text-highlighted">{{ candidate.channel === 'stable' ? 'Stable release' : 'Edge (main)' }}</p>
             <p class="mt-1 font-mono text-xs text-dimmed">
-              {{ candidate.channel === 'stable' ? candidate.version : candidate.revision.slice(0, 12) }}
+              {{ candidate.channel === 'stable' ? (candidate.version || 'No release published') : candidate.revision.slice(0, 12) }}
             </p>
           </div>
-          <UBadge :label="candidate.available ? 'Available' : 'Up to date'" :color="candidate.available ? 'success' : 'neutral'" variant="subtle" />
+          <UBadge :label="!candidate.version ? 'Unavailable' : candidate.available ? 'Available' : 'Up to date'" :color="candidate.available ? 'success' : 'neutral'" variant="subtle" />
         </div>
         <UButton
           class="mt-4"

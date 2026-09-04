@@ -541,6 +541,36 @@ func TestUpdatesReturnsUnavailableWhenGitHubFails(t *testing.T) {
 	}
 }
 
+func TestUpdatesAllowsEdgeWhenNoStableReleaseExists(t *testing.T) {
+	previousRevision := Revision
+	Revision = "abc123"
+	t.Cleanup(func() { Revision = previousRevision })
+
+	service := NewService("unused", "stacker")
+	service.client = githubTestClient(t, func(req *http.Request) *http.Response {
+		switch req.URL.Path {
+		case "/repos/adharshmk96/stacker/releases":
+			return jsonResponse(http.StatusOK, `[]`)
+		case "/repos/adharshmk96/stacker/commits/main":
+			return jsonResponse(http.StatusOK, `{"sha":"def456","commit":{"committer":{"date":"2026-09-04T00:00:00Z"}}}`)
+		default:
+			t.Fatalf("unexpected GitHub path %s", req.URL.Path)
+			return jsonResponse(http.StatusNotFound, `{}`)
+		}
+	})
+
+	updates, err := service.Updates(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updates.Stable.Channel != "stable" || updates.Stable.Available || updates.Stable.Version != "" {
+		t.Fatalf("stable = %#v", updates.Stable)
+	}
+	if updates.Edge.Revision != "def456" || !updates.Edge.Available {
+		t.Fatalf("edge = %#v", updates.Edge)
+	}
+}
+
 func TestHandlerUpdatesReturnsCandidates(t *testing.T) {
 	previousVersion, previousRevision := Version, Revision
 	Version, Revision = "v0.0.1", "abc123"
