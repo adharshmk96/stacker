@@ -497,6 +497,109 @@ func TestHandlerRestartAccepted(t *testing.T) {
 	}
 }
 
+func TestUpdatesFiltersPrereleasesAndComparesCurrentRevision(t *testing.T) {
+	previousVersion, previousRevision := Version, Revision
+	Version, Revision = "v0.0.1", "abc123"
+	t.Cleanup(func() { Version, Revision = previousVersion, previousRevision })
+
+	service := NewService("unused", "stacker")
+	service.client = githubTestClient(t, func(req *http.Request) *http.Response {
+		switch req.URL.Path {
+		case "/repos/adharshmk96/stacker/releases":
+			return jsonResponse(http.StatusOK, `[
+				{"tag_name":"v0.0.3","draft":true},
+				{"tag_name":"v0.0.2-rc.1","prerelease":true},
+				{"tag_name":"v0.0.2","published_at":"2026-09-04T00:00:00Z"}
+			]`)
+		case "/repos/adharshmk96/stacker/commits/main":
+			return jsonResponse(http.StatusOK, `{"sha":"def456","commit":{"committer":{"date":"2026-09-04T00:00:00Z"}}}`)
+		default:
+			t.Fatalf("unexpected GitHub path %s", req.URL.Path)
+			return jsonResponse(http.StatusNotFound, `{}`)
+		}
+	})
+
+	updates, err := service.Updates(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updates.Stable.Version != "v0.0.2" || !updates.Stable.Available {
+		t.Fatalf("stable = %#v", updates.Stable)
+	}
+	if updates.Edge.Revision != "def456" || !updates.Edge.Available {
+		t.Fatalf("edge = %#v", updates.Edge)
+	}
+}
+
+func TestUpdatesReturnsUnavailableWhenGitHubFails(t *testing.T) {
+	service := NewService("unused", "stacker")
+	service.client = githubTestClient(t, func(*http.Request) *http.Response {
+		return jsonResponse(http.StatusBadGateway, `{}`)
+	})
+	if _, err := service.Updates(context.Background()); !errors.Is(err, ErrUpdatesUnavailable) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestHandlerUpdatesReturnsCandidates(t *testing.T) {
+	previousVersion, previousRevision := Version, Revision
+	Version, Revision = "v0.0.1", "abc123"
+	t.Cleanup(func() { Version, Revision = previousVersion, previousRevision })
+	service := NewService("unused", "stacker")
+	service.client = githubTestClient(t, func(req *http.Request) *http.Response {
+		if strings.HasSuffix(req.URL.Path, "/releases") {
+			return jsonResponse(http.StatusOK, `[{"tag_name":"v0.0.2","published_at":"2026-09-04T00:00:00Z"}]`)
+		}
+		return jsonResponse(http.StatusOK, `{"sha":"def456","commit":{"committer":{"date":"2026-09-04T00:00:00Z"}}}`)
+	})
+	rec := doJSON(t, testEngine(service), http.MethodGet, "/api/server/updates", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"channel":"stable"`) {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+}
+
+func TestRunUpdateBuildsResolvedRevisionAndDeploysManagedStack(t *testing.T) {
+	service := NewService("unused", "custom")
+	service.advertiseAddr = "10.0.0.5"
+	var calls [][]string
+	service.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{name}, args...))
+		if name == "git" && len(args) > 0 && args[0] == "clone" {
+			repoDir := args[len(args)-1]
+			if err := os.MkdirAll(filepath.Join(repoDir, "deploy"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repoDir, "deploy", "stack.yml"), []byte("image: __STACKER_IMAGE__\nname: __STACKER_STACK_NAME__\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if name == "git" && len(args) > 0 && args[len(args)-1] == "HEAD" {
+			return []byte("feedface\n"), nil
+		}
+		return nil, nil
+	}
+
+	if err := service.runUpdate(context.Background(), UpdateCandidate{Channel: "stable", Version: "v0.0.2"}); err != nil {
+		t.Fatal(err)
+	}
+	joined := make([]string, 0, len(calls))
+	for _, call := range calls {
+		joined = append(joined, strings.Join(call, " "))
+	}
+	all := strings.Join(joined, "\n")
+	for _, want := range []string{
+		"docker build --pull --build-arg STACKER_VERSION=v0.0.2",
+		"STACKER_REVISION=feedface",
+		"docker stack deploy --detach=true --resolve-image never",
+		"docker service update --force --detach=true custom_traefik",
+		"docker service update --force --detach=true custom_stacker",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("commands missing %q:\n%s", want, all)
+		}
+	}
+}
+
 func TestRespondError(t *testing.T) {
 	tests := []struct {
 		err  error
@@ -556,4 +659,19 @@ func doJSON(t *testing.T, engine http.Handler, method, path string, body any) *h
 	rec := httptest.NewRecorder()
 	engine.ServeHTTP(rec, req)
 	return rec
+}
+
+type testRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f testRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func githubTestClient(t *testing.T, respond func(*http.Request) *http.Response) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: testRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return respond(req), nil
+	})}
+}
+
+func jsonResponse(status int, body string) *http.Response {
+	return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d test", status), Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }

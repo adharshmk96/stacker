@@ -15,4 +15,6 @@ func (m *Module) RegisterRoutes(r *gin.RouterGroup) {
 	server.GET("", m.handler.get)
 	server.PUT("/domain", m.handler.updateDomain)
 	server.POST("/restart", m.handler.restart)
+	server.GET("/updates", m.handler.updates)
+	server.POST("/updates", m.handler.update)
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ServerSettings, ServiceInfo } from '~/types/server'
+import type { ServerSettings, ServerUpdates, ServiceInfo, UpdateCandidate } from '~/types/server'
 
 const api = useApi()
 const toast = useToast()
@@ -11,6 +11,12 @@ const savedDomain = ref('')
 const savingDomain = ref(false)
 const restarting = ref<'stacker' | 'traefik' | null>(null)
 const resetOpen = ref(false)
+const updates = ref<ServerUpdates | null>(null)
+const updatesLoading = ref(true)
+const updatesError = ref('')
+const updateOpen = ref(false)
+const selectedUpdate = ref<UpdateCandidate | null>(null)
+const startingUpdate = ref(false)
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 
@@ -35,6 +41,55 @@ async function load() {
     loadError.value = error instanceof Error ? error.message : 'Could not load server settings'
   } finally {
     loading.value = false
+  }
+}
+
+async function loadUpdates() {
+  updatesLoading.value = true
+  updatesError.value = ''
+  try {
+    updates.value = await api.get<ServerUpdates>('/server/updates')
+  } catch (error) {
+    updatesError.value = error instanceof Error ? error.message : 'Could not check for updates'
+  } finally {
+    updatesLoading.value = false
+  }
+}
+
+function openUpdate(candidate: UpdateCandidate) {
+  selectedUpdate.value = candidate
+  updateOpen.value = true
+}
+
+async function startUpdate() {
+  if (!selectedUpdate.value) return
+  startingUpdate.value = true
+  const before = settings.value?.instance
+  try {
+    await api.post('/server/updates', { channel: selectedUpdate.value.channel })
+    updateOpen.value = false
+    toast.add({
+      title: `${selectedUpdate.value.channel === 'stable' ? 'Stable' : 'Edge'} update started`,
+      description: 'The dashboard will disconnect briefly while Stacker rebuilds and restarts.',
+      icon: 'i-lucide-download',
+      color: 'success'
+    })
+    const timer = window.setInterval(async () => {
+      try {
+        const refreshed = await api.get<ServerSettings>('/server')
+        const changed = refreshed.instance.version !== before?.version || refreshed.instance.revision !== before?.revision
+        if (!changed) return
+        window.clearInterval(timer)
+        window.location.reload()
+      } catch {
+        // A network failure is expected while the Swarm task is replaced.
+      }
+    }, 5_000)
+    window.setTimeout(() => window.clearInterval(timer), 15 * 60_000)
+  } catch (error) {
+    toast.add({ title: 'Could not start update', description: error instanceof Error ? error.message : undefined, icon: 'i-lucide-circle-alert', color: 'error' })
+  } finally {
+    startingUpdate.value = false
   }
 }
 
@@ -77,6 +132,7 @@ const statusColor = (status: ServiceInfo['status']) => status === 'healthy' ? 's
 
 onMounted(() => {
   load()
+  loadUpdates()
   clock = setInterval(() => { now.value = Date.now() }, 60_000)
 })
 onUnmounted(() => clearInterval(clock))
@@ -109,6 +165,51 @@ onUnmounted(() => clearInterval(clock))
         <dd class="mt-1 font-mono text-sm text-highlighted">{{ field.value }}</dd>
       </div>
     </dl>
+  </SettingsSection>
+
+  <SettingsSection title="Updates" description="Install a newer Stacker release or move to the latest commit on main.">
+    <div v-if="updatesLoading" class="grid gap-3 sm:grid-cols-2">
+      <USkeleton v-for="index in 2" :key="index" class="h-24" />
+    </div>
+    <UAlert
+      v-else-if="updatesError"
+      title="Could not check for updates"
+      :description="updatesError"
+      icon="i-lucide-circle-alert"
+      color="error"
+      :actions="[{ label: 'Retry', onClick: loadUpdates }]"
+    />
+    <div v-else-if="updates" class="grid gap-3 sm:grid-cols-2">
+      <div v-for="candidate in [updates.stable, updates.edge]" :key="candidate.channel" class="rounded-md border border-default p-4">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <p class="font-medium text-highlighted">{{ candidate.channel === 'stable' ? 'Stable release' : 'Edge (main)' }}</p>
+            <p class="mt-1 font-mono text-xs text-dimmed">
+              {{ candidate.channel === 'stable' ? candidate.version : candidate.revision.slice(0, 12) }}
+            </p>
+          </div>
+          <UBadge :label="candidate.available ? 'Available' : 'Up to date'" :color="candidate.available ? 'success' : 'neutral'" variant="subtle" />
+        </div>
+        <UButton
+          class="mt-4"
+          :label="candidate.channel === 'stable' ? 'Update stable' : 'Update edge'"
+          icon="i-lucide-download"
+          color="neutral"
+          variant="subtle"
+          size="sm"
+          :disabled="!candidate.available || updates.updating"
+          @click="openUpdate(candidate)"
+        />
+      </div>
+    </div>
+    <UAlert
+      v-if="updates?.error"
+      class="mt-4"
+      title="Server update failed"
+      :description="updates.error"
+      icon="i-lucide-circle-alert"
+      color="error"
+    />
   </SettingsSection>
 
   <SettingsSection title="Domain" description="The hostname Traefik uses for this dashboard and API. DNS must point to this server.">
@@ -203,4 +304,29 @@ onUnmounted(() => clearInterval(clock))
   </SettingsSection>
 
   <SettingsResetDataModal v-model:open="resetOpen" />
+
+  <UModal v-model:open="updateOpen" :title="selectedUpdate?.channel === 'stable' ? 'Update Stacker stable' : 'Update Stacker edge'">
+    <template #body>
+      <p class="text-sm text-muted">
+        This rebuilds Stacker and replaces its Docker Swarm task. Your projects, domains, certificates, and stored data stay in place, but the dashboard will be briefly unavailable.
+      </p>
+      <p v-if="selectedUpdate" class="mt-4 font-mono text-sm text-highlighted">
+        Target: {{ selectedUpdate.channel === 'stable' ? selectedUpdate.version : selectedUpdate.revision }}
+      </p>
+      <UAlert
+        v-if="selectedUpdate && selectedUpdate.channel !== (settings?.instance.version === 'main' ? 'edge' : 'stable')"
+        class="mt-4"
+        title="This switches update channels"
+        description="This replaces the current build with the selected channel."
+        icon="i-lucide-git-branch"
+        color="warning"
+      />
+    </template>
+    <template #footer>
+      <div class="flex w-full justify-end gap-2">
+        <UButton label="Cancel" color="neutral" variant="ghost" :disabled="startingUpdate" @click="updateOpen = false" />
+        <UButton label="Start update" icon="i-lucide-download" :loading="startingUpdate" @click="startUpdate" />
+      </div>
+    </template>
+  </UModal>
 </template>

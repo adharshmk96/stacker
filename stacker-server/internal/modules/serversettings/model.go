@@ -3,13 +3,15 @@ package serversettings
 import "time"
 
 type Instance struct {
-	Hostname  string    `json:"hostname"`
-	IP        string    `json:"ip,omitempty"`
-	Version   string    `json:"version"`
-	BuiltAt   string    `json:"builtAt,omitempty"`
-	StartedAt time.Time `json:"startedAt"`
-	Docker    string    `json:"docker,omitempty"`
-	OS        string    `json:"os,omitempty"`
+	Hostname   string    `json:"hostname"`
+	IP         string    `json:"ip,omitempty"`
+	Version    string    `json:"version"`
+	BuiltAt    string    `json:"builtAt,omitempty"`
+	StartedAt  time.Time `json:"startedAt"`
+	Docker     string    `json:"docker,omitempty"`
+	OS         string    `json:"os,omitempty"`
+	Revision   string    `json:"revision,omitempty"`
+	Repository string    `json:"repository,omitempty"`
 }
 
 type Settings struct {
@@ -45,4 +47,23 @@ type DomainRequest struct {
 
 type RestartRequest struct {
 	Target string `json:"target" binding:"required"`
+}
+
+type UpdateCandidate struct {
+	Channel     string    `json:"channel"`
+	Version     string    `json:"version"`
+	Revision    string    `json:"revision"`
+	PublishedAt time.Time `json:"publishedAt,omitempty"`
+	Available   bool      `json:"available"`
+}
+
+type Updates struct {
+	Stable   UpdateCandidate `json:"stable"`
+	Edge     UpdateCandidate `json:"edge"`
+	Updating bool            `json:"updating"`
+	Error    string          `json:"error,omitempty"`
+}
+
+type UpdateRequest struct {
+	Channel string `json:"channel" binding:"required,oneof=stable edge"`
 }

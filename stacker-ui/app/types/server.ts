@@ -7,6 +7,8 @@ export interface ServerSettings {
     startedAt: string
     docker?: string
     os?: string
+    revision?: string
+    repository?: string
   }
   traefik: {
     domain: string
@@ -19,6 +21,21 @@ export interface ServerSettings {
     stackerService: ServiceInfo
     traefikService: ServiceInfo
   }
+}
+
+export interface UpdateCandidate {
+  channel: 'stable' | 'edge'
+  version: string
+  revision: string
+  publishedAt?: string
+  available: boolean
+}
+
+export interface ServerUpdates {
+  stable: UpdateCandidate
+  edge: UpdateCandidate
+  updating: boolean
+  error?: string
 }
 
 export interface ServiceInfo {

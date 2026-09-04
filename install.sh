@@ -224,15 +224,18 @@ read_setup_choice() {
 
 deploy() {
   local source_dir="$1" advertise_addr="$2" host="$3"
-  local built_at node_name stack_file
+  local built_at node_name source_revision stack_file
   built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   node_name="$(hostname -f 2>/dev/null || hostname)"
+  source_revision="$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || printf 'unknown')"
   stack_file="$RENDER_TMP/stack.yml"
 
   log "Building Docker image $IMAGE from source directory: $source_dir"
   docker build --pull \
     --build-arg "STACKER_VERSION=$REPOSITORY_REF" \
     --build-arg "STACKER_BUILT_AT=$built_at" \
+    --build-arg "STACKER_REVISION=$source_revision" \
+    --build-arg "STACKER_REPOSITORY_URL=$REPOSITORY_URL" \
     -t "$IMAGE" "$source_dir" </dev/null
 
   sed \
