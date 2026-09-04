@@ -1107,6 +1107,36 @@ func TestStatusReportsWhatDockerRuns(t *testing.T) {
 	}
 }
 
+func TestStatusIgnoresAStoppedOneTimeService(t *testing.T) {
+	service, rec := testService(t, Options{})
+
+	item, err := service.Create(writeRequest())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	stack := StackName(item, item.Environments[0])
+	rec.reply = func(cmd Command) ([]string, error) {
+		if !strings.Contains(cmd.String(), "service ls") {
+			return nil, nil
+		}
+		return []string{
+			`{"Name":"` + stack + `_web","Mode":"replicated","Replicas":"1/1"}`,
+			`{"Name":"` + stack + `_migrate","Mode":"replicated","Replicas":"0/1"}`,
+		}, nil
+	}
+
+	status, err := service.Status(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if got := status.Environments[0].State; got != RuntimeRunning {
+		t.Errorf("state = %q, want running when the application is up", got)
+	}
+	if got := status.State; got != RuntimeRunning {
+		t.Errorf("project state = %q, want running", got)
+	}
+}
+
 func TestStatusStatesFromDocker(t *testing.T) {
 	cases := map[string]struct {
 		lines []string

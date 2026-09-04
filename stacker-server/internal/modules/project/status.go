@@ -61,11 +61,38 @@ func (s *statusReader) environmentFromRows(env Environment, stack string, rows [
 		status.State = RuntimeStopped
 	case status.Desired > 0 && status.Running == status.Desired:
 		status.State = RuntimeRunning
-	default:
+	case hasPartiallyRunningService(status.Services):
 		status.State = RuntimeDegraded
 		status.Message = "some tasks are not running"
+	case hasRunningService(status.Services):
+		// A stopped service can be a completed one-time job. It must not turn
+		// an otherwise healthy application into a degraded project.
+		status.State = RuntimeRunning
+	default:
+		status.State = RuntimeStopped
 	}
 	return status
+}
+
+// hasPartiallyRunningService identifies a service that is short of replicas
+// without being fully stopped. Unlike a completed one-time job, this is a live
+// availability problem and should keep the environment degraded.
+func hasPartiallyRunningService(services []ServiceState) bool {
+	for _, service := range services {
+		if service.Running > 0 && service.Running < service.Desired {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRunningService(services []ServiceState) bool {
+	for _, service := range services {
+		if service.Running > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Environment reads one environment's live state.
